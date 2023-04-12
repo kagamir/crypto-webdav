@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto-webdav/crytpo"
 	"golang.org/x/net/webdav"
 	"log"
 	"net/http"
@@ -8,7 +9,7 @@ import (
 
 const (
 	address        = "0.0.0.0:8080"
-	fileSystemRoot = "./webdav" // 修改为实际的共享文件夹路径
+	fileSystemRoot = "./upload" // 修改为实际的共享文件夹路径
 )
 
 type Handler struct {
@@ -41,7 +42,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func main() {
 	// 设置WebDAV文件系统和锁定系统
 	fileSystem := &webdav.Handler{
-		FileSystem: webdav.Dir(fileSystemRoot),
+		//FileSystem: upload.Dir(fileSystemRoot),
+		FileSystem: crytpo.CryptoFS{Dir: webdav.Dir(fileSystemRoot)},
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(r *http.Request, err error) {
 			if err != nil {

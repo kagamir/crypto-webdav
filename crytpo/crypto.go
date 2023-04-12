@@ -3,6 +3,7 @@ package crytpo
 import (
 	"context"
 	"golang.org/x/net/webdav"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -35,6 +36,8 @@ func (c CryptoFS) resolve(name string) string {
 
 func (c CryptoFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	name = c.resolve(name)
+	log.Println("[OpenFile]" + name)
+
 	if name == "" {
 		return nil, os.ErrNotExist
 	}

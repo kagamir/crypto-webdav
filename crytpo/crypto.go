@@ -2,6 +2,7 @@ package crytpo
 
 import (
 	"context"
+	"crypto/sha1"
 	"golang.org/x/net/webdav"
 	"log"
 	"os"
@@ -9,6 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+func Sha256(s string) (hash []byte) {
+	h := sha1.New()
+	h.Write([]byte(s))
+	hash = h.Sum(nil)
+	return
+}
 
 type CryptoFS struct {
 	webdav.Dir
@@ -36,7 +44,7 @@ func (c CryptoFS) resolve(name string) string {
 
 func (c CryptoFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	name = c.resolve(name)
-	log.Println("[OpenFile]" + name)
+	log.Printf("[OpenFile] %s %d %d", name, flag, perm)
 
 	if name == "" {
 		return nil, os.ErrNotExist

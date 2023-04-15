@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto-webdav/crytpo"
 	auth "github.com/abbot/go-http-auth"
 	"github.com/foomo/htpasswd"
@@ -62,23 +63,30 @@ func (h *Htpasswd) GetSecret(user string, realm string) string {
 }
 
 type Handler struct {
-	writer        http.ResponseWriter
-	request       *http.Request
-	username      string
-	handler       *webdav.Handler
-	authenticator *auth.BasicAuth
+	writer   http.ResponseWriter
+	request  *http.Request
+	username string
+	handler  *webdav.Handler
+	htpasswd *Htpasswd
 }
 
 func (h *Handler) login() bool {
-	username := h.authenticator.CheckAuth(h.request)
+	authenticator := auth.NewBasicAuthenticator("", h.htpasswd.GetSecret)
+	username := authenticator.CheckAuth(h.request)
 	if username == "" {
 		log.Println("login failed")
-		h.authenticator.RequireAuth(h.writer, h.request)
+		authenticator.RequireAuth(h.writer, h.request)
 		return false
-	} else {
-		h.username = username
-		return true
 	}
+	h.username = username
+
+	_, password, _ := h.request.BasicAuth()
+	cryptoKey := crytpo.Sha256(username + password)
+	ctx := h.request.Context()
+	ctx = context.WithValue(ctx, "crypto.Key", cryptoKey)
+	h.request = h.request.WithContext(ctx)
+
+	return true
 }
 
 func (h *Handler) makeWebdav() {
@@ -104,16 +112,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	h.handler.ServeHTTP(w, req)
+	h.handler.ServeHTTP(h.writer, h.request)
 }
 
 func main() {
 	myHtpasswd := &Htpasswd{}
 	myHtpasswd.Init()
 
-	authenticator := auth.NewBasicAuthenticator("", myHtpasswd.GetSecret)
-
-	http.Handle("/", &Handler{authenticator: authenticator})
+	http.Handle("/", &Handler{htpasswd: myHtpasswd})
 
 	log.Printf("WebDAV server running at %s", address)
 	log.Fatal("[FATAL] ", http.ListenAndServe(address, nil))

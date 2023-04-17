@@ -1,15 +1,13 @@
 package crytpo
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/binary"
-	"golang.org/x/net/webdav"
 	"io"
 	"io/fs"
 	"log"
+	"math/big"
 	"os"
 )
 
@@ -27,28 +25,15 @@ type AesCtr struct {
 }
 
 func (a *AesCtr) getIV(position int64) (iv []byte, err error) {
-	offset := uint64((position+BlockSize-1)/BlockSize - 1)
+	offset := position/BlockSize - 1
 
 	iv = make([]byte, len(a.nonce))
 	copy(iv, a.nonce)
 
-	var ivNum uint64
-	buf := bytes.NewReader(iv)
-	err = binary.Read(buf, binary.BigEndian, &ivNum)
-	if handleError(err); err != nil {
-		return
-	}
-
-	ivNum += offset
-
-	buf2 := new(bytes.Buffer)
-	err = binary.Write(buf2, binary.BigEndian, ivNum)
-	if handleError(err); err != nil {
-		return
-	}
-
-	iv = buf2.Bytes()
-
+	bigIntA := new(big.Int).SetBytes(iv)
+	bigIntB := big.NewInt(offset)
+	bigIntResult := new(big.Int).Add(bigIntA, bigIntB)
+	iv = bigIntResult.Bytes()
 	return
 }
 
@@ -77,9 +62,15 @@ func (a *AesCtr) Encrypt(plaintext []byte, position int64) ([]byte, error) {
 	return ciphertext, err
 }
 
+type EncryptedFileInfo struct {
+	fs.FileInfo
+}
+
+func (i *EncryptedFileInfo) Size() int64 {
+	return i.FileInfo.Size() - BlockSize
+}
+
 type EncryptedFile struct {
-	webdav.File
-	path        string
 	filePointer *os.File
 	aes         *AesCtr
 	ptrPos      int64
@@ -90,39 +81,48 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 	if err != nil {
 		return
 	}
-	fileLen, err := fp.Seek(0, io.SeekEnd)
-	if handleError(err); err != nil {
-		return
+	fileInfo, err := fp.Stat()
+	if err != nil {
+		return err
 	}
-	nonce := make([]byte, BlockSize)
-	if fileLen == 0 {
-		_, err = rand.Read(nonce)
-		if handleError(err); err != nil {
-			return
+
+	if !fileInfo.IsDir() {
+		var inErr error
+		fileLen := fileInfo.Size()
+		nonce := make([]byte, BlockSize)
+		if fileLen == 0 {
+			_, err = rand.Read(nonce)
+			if handleError(inErr); inErr != nil {
+				return inErr
+			}
+			_, err = fp.Write(nonce)
+			if handleError(inErr); inErr != nil {
+				return inErr
+			}
+
+		} else {
+			_, err = fp.Seek(0, io.SeekStart)
+			if handleError(inErr); inErr != nil {
+				return inErr
+			}
+
+			_, err = fp.Read(nonce)
+			if handleError(inErr); inErr != nil {
+				return inErr
+			}
 		}
-		_, err = fp.Write(nonce)
-		if handleError(err); err != nil {
-			return
-		}
+		e.filePointer = fp
+		_, _ = e.Seek(0, io.SeekStart)
+		e.aes = &AesCtr{nonce: nonce, key: key}
 
 	} else {
-		_, err = fp.Seek(0, io.SeekStart)
-		if handleError(err); err != nil {
-			return
-		}
-
-		_, err = fp.Read(nonce)
-		if handleError(err); err != nil {
-			return
-		}
+		e.filePointer = fp
 	}
-	_, _ = fp.Seek(0, io.SeekStart)
-	e.filePointer = fp
-	e.aes = &AesCtr{nonce: nonce, key: key}
 	return
 }
 
 func (e *EncryptedFile) Write(b []byte) (n int, err error) {
+	log.Println("[Write]", b)
 	b, err = e.aes.Encrypt(b, e.ptrPos)
 	if handleError(err); err != nil {
 		return
@@ -137,17 +137,28 @@ func (e *EncryptedFile) Write(b []byte) (n int, err error) {
 func (e *EncryptedFile) Read(b []byte) (n int, err error) {
 	position := e.ptrPos
 	n, err = e.filePointer.Read(b)
-	if handleError(err); err != nil {
+	log.Println("[Read Num]", n)
+	log.Println("[Read Err]", err)
+	if err == io.EOF {
+		log.Println("[Read EOF Num]", n)
+		b = []byte(nil)
+		return 0, io.EOF
+	}
+	if err != nil {
+		log.Println("[Read Error]", err)
 		return
 	}
 	b, err = e.aes.Decrypt(b, position)
+	log.Println("[Decrypt]", b[:n])
 	if handleError(err); err != nil {
 		return
 	}
-	return
+
+	return n, nil
 }
 
 func (e *EncryptedFile) Seek(offset int64, whence int) (ret int64, err error) {
+	offset += BlockSize
 	ret, err = e.filePointer.Seek(offset, whence)
 	if err != nil {
 		return 0, err
@@ -168,6 +179,7 @@ func (e *EncryptedFile) Readdir(n int) (infos []fs.FileInfo, err error) {
 }
 
 func (e *EncryptedFile) Stat() (fs.FileInfo, error) {
-	fileStat, err := e.filePointer.Stat()
+	fileInfo, err := e.filePointer.Stat()
+	fileStat := &EncryptedFileInfo{fileInfo}
 	return fileStat, err
 }

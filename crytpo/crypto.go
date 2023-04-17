@@ -44,13 +44,15 @@ func (c CryptoFS) resolve(name string) string {
 
 func (c CryptoFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	name = c.resolve(name)
-	log.Println(ctx.Value("crypto.Key"))
 	log.Printf("[OpenFile] %s %d %d\n", name, flag, perm)
-
 	if name == "" {
 		return nil, os.ErrNotExist
 	}
-	f, err := os.OpenFile(name, flag, perm)
+	key := ctx.Value("crypto.Key").([]byte)
+
+	f := &EncryptedFile{}
+	err := f.Open(name, flag, perm, key)
+	//f, err := os.OpenFile(name, flag, perm)
 	if err != nil {
 		return nil, err
 	}

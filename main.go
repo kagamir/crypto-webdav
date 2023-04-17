@@ -107,11 +107,11 @@ func (h *Handler) makeWebdav() {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h.writer = w
 	h.request = req
-	h.makeWebdav()
 	ok := h.login()
 	if !ok {
 		return
 	}
+	h.makeWebdav()
 	h.handler.ServeHTTP(h.writer, h.request)
 }
 
@@ -119,7 +119,10 @@ func main() {
 	myHtpasswd := &Htpasswd{}
 	myHtpasswd.Init()
 
-	http.Handle("/", &Handler{htpasswd: myHtpasswd})
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		handler := Handler{htpasswd: myHtpasswd}
+		handler.ServeHTTP(w, r)
+	})
 
 	log.Printf("WebDAV server running at %s", address)
 	log.Fatal("[FATAL] ", http.ListenAndServe(address, nil))

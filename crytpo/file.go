@@ -25,7 +25,7 @@ type AesCtr struct {
 }
 
 func (a *AesCtr) getIV(position int64) (iv []byte, err error) {
-	offset := position/BlockSize - 1
+	offset := position / BlockSize
 
 	iv = make([]byte, len(a.nonce))
 	copy(iv, a.nonce)
@@ -127,7 +127,6 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 }
 
 func (e *EncryptedFile) Write(b []byte) (n int, err error) {
-	log.Println("[Write]", b)
 	b, err = e.aes.Encrypt(b, e.ptrPos)
 	if handleError(err); err != nil {
 		return
@@ -140,18 +139,18 @@ func (e *EncryptedFile) Write(b []byte) (n int, err error) {
 }
 
 func (e *EncryptedFile) Read(b []byte) (n int, err error) {
-	position := e.ptrPos
 	buffer := make([]byte, len(b))
 	n, err = e.filePointer.Read(buffer)
 	if err != nil {
 		log.Println("[Read Error]", err)
 		return
 	}
-	buffer, err = e.aes.Decrypt(buffer, position)
-	copy(b, buffer)
+	buffer, err = e.aes.Decrypt(buffer, e.ptrPos)
 	if handleError(err); err != nil {
 		return
 	}
+	copy(b, buffer)
+	e.ptrPos += int64(n)
 	return
 }
 

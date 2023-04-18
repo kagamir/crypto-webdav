@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"golang.org/x/net/webdav"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -44,7 +43,6 @@ func (c CryptoFS) resolve(name string) string {
 
 func (c CryptoFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	name = c.resolve(name)
-	log.Printf("[OpenFile] %s %d %d\n", name, flag, perm)
 	if name == "" {
 		return nil, os.ErrNotExist
 	}

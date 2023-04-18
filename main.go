@@ -71,7 +71,7 @@ type Handler struct {
 }
 
 func (h *Handler) login() bool {
-	authenticator := auth.NewBasicAuthenticator("", h.htpasswd.GetSecret)
+	authenticator := auth.NewBasicAuthenticator("Restricted", h.htpasswd.GetSecret)
 	username := authenticator.CheckAuth(h.request)
 	if username == "" {
 		log.Println("login failed")

@@ -67,7 +67,11 @@ type EncryptedFileInfo struct {
 }
 
 func (i *EncryptedFileInfo) Size() int64 {
-	return i.FileInfo.Size() - BlockSize
+	size := i.FileInfo.Size() - BlockSize
+	if size < 0 {
+		size = 0
+	}
+	return size
 }
 
 type EncryptedFile struct {
@@ -91,6 +95,7 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 		fileLen := fileInfo.Size()
 		nonce := make([]byte, BlockSize)
 		if fileLen == 0 {
+			log.Println("[Open] New", name)
 			_, err = rand.Read(nonce)
 			if handleError(inErr); inErr != nil {
 				return inErr
@@ -136,36 +141,31 @@ func (e *EncryptedFile) Write(b []byte) (n int, err error) {
 
 func (e *EncryptedFile) Read(b []byte) (n int, err error) {
 	position := e.ptrPos
-	n, err = e.filePointer.Read(b)
-	log.Println("[Read Num]", n)
-	log.Println("[Read Err]", err)
-	if err == io.EOF {
-		log.Println("[Read EOF Num]", n)
-		b = []byte(nil)
-		return 0, io.EOF
-	}
+	buffer := make([]byte, len(b))
+	n, err = e.filePointer.Read(buffer)
 	if err != nil {
 		log.Println("[Read Error]", err)
 		return
 	}
-	b, err = e.aes.Decrypt(b, position)
-	log.Println("[Decrypt]", b[:n])
+	buffer, err = e.aes.Decrypt(buffer, position)
+	copy(b, buffer)
 	if handleError(err); err != nil {
 		return
 	}
-
-	return n, nil
+	return
 }
 
 func (e *EncryptedFile) Seek(offset int64, whence int) (ret int64, err error) {
-	offset += BlockSize
+	if whence == io.SeekStart || whence == io.SeekCurrent {
+		offset += BlockSize
+	}
 	ret, err = e.filePointer.Seek(offset, whence)
 	if err != nil {
 		return 0, err
 	}
-	e.ptrPos = offset
+	ret -= BlockSize
+	e.ptrPos = ret
 	return
-
 }
 
 func (e *EncryptedFile) Close() (err error) {

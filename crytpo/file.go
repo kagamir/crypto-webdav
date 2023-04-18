@@ -156,7 +156,7 @@ func (e *EncryptedFile) Read(b []byte) (n int, err error) {
 }
 
 func (e *EncryptedFile) Seek(offset int64, whence int) (ret int64, err error) {
-	if whence == io.SeekStart || whence == io.SeekCurrent {
+	if whence == io.SeekStart {
 		offset += BlockSize
 	}
 	ret, err = e.filePointer.Seek(offset, whence)

@@ -135,6 +135,7 @@ func (e *EncryptedFile) Write(b []byte) (n int, err error) {
 	if handleError(err); err != nil {
 		return
 	}
+	e.ptrPos += int64(n)
 	return
 }
 

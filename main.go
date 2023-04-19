@@ -107,9 +107,11 @@ func (h *Handler) makeWebdav() {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	h.writer = w
 	h.request = req
-	ok := h.login()
-	if !ok {
-		return
+	if req.Method != "OPTIONS" {
+		ok := h.login()
+		if !ok {
+			return
+		}
 	}
 	h.makeWebdav()
 	h.handler.ServeHTTP(h.writer, h.request)

@@ -1,7 +1,7 @@
 package frontend
 
 import (
-	"crypto-webdav/frontend/templates"
+	"embed"
 	"golang.org/x/net/webdav"
 	"html/template"
 	"io"
@@ -9,6 +9,9 @@ import (
 	"os"
 	"strconv"
 )
+
+//go:embed templates
+var embeddedFiles embed.FS
 
 type TemplateItem struct {
 	Name    string
@@ -29,7 +32,7 @@ type BrowserDir struct {
 }
 
 func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
-	tmpl, err := template.New("dir template").Parse(templates.BrowserDirHtml)
+	tmpl, err := template.ParseFS(embeddedFiles, "templates/browser.html")
 	if err != nil {
 		log.Println(err)
 	}

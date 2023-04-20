@@ -3,71 +3,23 @@ package main
 import (
 	"context"
 	"crypto-webdav/crytpo"
+	"crypto-webdav/frontend"
 	auth "github.com/abbot/go-http-auth"
-	"github.com/foomo/htpasswd"
 	"golang.org/x/net/webdav"
 	"log"
 	"net/http"
-	"os"
 )
 
 const (
 	address = "0.0.0.0:8080"
 )
 
-type Htpasswd struct {
-	HtpasswdPath string
-	passwords    map[string]string
-}
-
-func (h *Htpasswd) Init() {
-	htpasswdPath, ok := os.LookupEnv("WEBDAV_HTPASSWD_FILE")
-	if !ok {
-		htpasswdPath = "./htpasswd"
-	}
-	passwords, err := htpasswd.ParseHtpasswdFile(htpasswdPath)
-	if err != nil {
-		log.Fatal(err)
-		return
-	}
-	h.passwords = passwords
-	h.makeDir()
-}
-
-func (h *Htpasswd) getUsers() []string {
-	users := make([]string, 0, len(h.passwords))
-	for k := range h.passwords {
-		users = append(users, k)
-	}
-	return users
-}
-
-func (h *Htpasswd) makeDir() {
-	users := h.getUsers()
-	for _, user := range users {
-		dirPath := "./upload/" + user
-		err := os.MkdirAll(dirPath, 0777)
-		if err != nil {
-			log.Fatal(err)
-			return
-		}
-	}
-}
-
-func (h *Htpasswd) GetSecret(user string, realm string) string {
-	secret, ok := h.passwords[user]
-	if !ok {
-		return ""
-	}
-	return secret
-}
-
 type Handler struct {
 	writer   http.ResponseWriter
 	request  *http.Request
 	username string
 	handler  *webdav.Handler
-	htpasswd *Htpasswd
+	htpasswd *crytpo.Htpasswd
 }
 
 func (h *Handler) login() bool {
@@ -104,22 +56,42 @@ func (h *Handler) makeWebdav() {
 	}
 }
 
-func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.writer = w
-	h.request = req
-	if req.Method != "OPTIONS" {
+	h.request = r
+	if r.Method != http.MethodOptions {
 		ok := h.login()
 		if !ok {
 			return
 		}
 	}
 	h.makeWebdav()
+
+	if r.Method == http.MethodGet {
+		stat, err := h.handler.FileSystem.Stat(nil, r.URL.Path)
+		if err != nil {
+			log.Println("[STAT]", err)
+			return
+		}
+		if stat.IsDir() {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			bd := frontend.BrowserDir{FS: h.handler.FileSystem, Name: r.URL.Path}
+			err = bd.MakeHTML(w)
+			if err != nil {
+				return
+			}
+			return
+		}
+	}
 	h.handler.ServeHTTP(h.writer, h.request)
 }
 
 func main() {
-	myHtpasswd := &Htpasswd{}
-	myHtpasswd.Init()
+	myHtpasswd := &crytpo.Htpasswd{}
+	err := myHtpasswd.Init()
+	if err != nil {
+		return
+	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		handler := Handler{htpasswd: myHtpasswd}

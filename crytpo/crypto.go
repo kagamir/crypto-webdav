@@ -46,7 +46,12 @@ func (c CryptoFS) OpenFile(ctx context.Context, name string, flag int, perm os.F
 	if name == "" {
 		return nil, os.ErrNotExist
 	}
-	key := ctx.Value("crypto.Key").([]byte)
+	var key []byte
+	if ctx != nil {
+		key = ctx.Value("crypto.Key").([]byte)
+	} else {
+		key = nil
+	}
 
 	f := &EncryptedFile{}
 	err := f.Open(name, flag, perm, key)

@@ -35,4 +35,4 @@ build-latest:
     - docker build -t kagamir/crypto-webdav:latest .
     - docker push kagamir/crypto-webdav:latest
   only:
-    - main
+    - master

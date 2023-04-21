@@ -1,4 +1,4 @@
-package crytpo
+package crypto
 
 import (
 	"context"

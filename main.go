@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"crypto-webdav/crytpo"
+	"crypto-webdav/crypto"
 	"crypto-webdav/frontend"
 	"errors"
 	auth "github.com/abbot/go-http-auth"
@@ -21,7 +21,7 @@ type Handler struct {
 	request  *http.Request
 	username string
 	handler  *webdav.Handler
-	htpasswd *crytpo.Htpasswd
+	htpasswd *crypto.Htpasswd
 }
 
 func (h *Handler) login() bool {
@@ -35,7 +35,7 @@ func (h *Handler) login() bool {
 	h.username = username
 
 	_, password, _ := h.request.BasicAuth()
-	cryptoKey := crytpo.Sha256(username + password)
+	cryptoKey := crypto.Sha256(username + password)
 	ctx := h.request.Context()
 	ctx = context.WithValue(ctx, "crypto.Key", cryptoKey)
 	h.request = h.request.WithContext(ctx)
@@ -46,7 +46,7 @@ func (h *Handler) login() bool {
 func (h *Handler) makeWebdav() {
 	dirPath := "./upload/" + h.username
 	h.handler = &webdav.Handler{
-		FileSystem: crytpo.CryptoFS{Dir: webdav.Dir(dirPath)},
+		FileSystem: crypto.CryptoFS{Dir: webdav.Dir(dirPath)},
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(r *http.Request, err error) {
 			if err != nil {
@@ -94,7 +94,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	myHtpasswd := &crytpo.Htpasswd{}
+	myHtpasswd := &crypto.Htpasswd{}
 	err := myHtpasswd.Init()
 	if err != nil {
 		return

@@ -1,7 +1,7 @@
 package frontend
 
 import (
-	"crypto-webdav/crytpo"
+	"crypto-webdav/crypto"
 	"embed"
 	"fmt"
 	"golang.org/x/net/webdav"
@@ -83,7 +83,7 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 
 	var items []TemplateItem
 	for _, fileInfo := range fileInfos {
-		fileStat := crytpo.EncryptedFileInfo{FileInfo: fileInfo}
+		fileStat := crypto.EncryptedFileInfo{FileInfo: fileInfo}
 		var isDir string
 		var mode string
 		var size string

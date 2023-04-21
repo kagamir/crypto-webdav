@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto-webdav/crytpo"
 	"crypto-webdav/frontend"
+	"errors"
 	auth "github.com/abbot/go-http-auth"
 	"golang.org/x/net/webdav"
 	"log"
 	"net/http"
+	"os"
 )
 
 const (
@@ -70,7 +72,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		stat, err := h.handler.FileSystem.Stat(nil, r.URL.Path)
 		if err != nil {
-			log.Println("[STAT]", err)
+			var pathError *os.PathError
+			if errors.As(err, &pathError) {
+				http.NotFound(w, r)
+			} else {
+				log.Println("[STAT]", err)
+			}
 			return
 		}
 		if stat.IsDir() {

@@ -1,0 +1,38 @@
+stages:
+  - build
+
+
+build-tag:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - docker login -u kagamir -p $docker_passwd
+  script:
+    - docker build -t kagamir/crypto-webdav:$CI_COMMIT_REF_NAME .
+    - docker push kagamir/crypto-webdav:$CI_COMMIT_REF_NAME
+  only:
+    - tags
+
+
+build-latest:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - docker login -u kagamir -p $docker_passwd
+  script:
+    - docker build -t kagamir/crypto-webdav:latest .
+    - docker push kagamir/crypto-webdav:latest
+  only:
+    - main

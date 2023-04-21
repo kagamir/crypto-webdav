@@ -25,7 +25,8 @@ type TemplateItem struct {
 }
 
 type TemplateData struct {
-	Items []TemplateItem
+	UserName string
+	Items    []TemplateItem
 }
 
 func formatBytes(bytes int64) string {
@@ -60,8 +61,9 @@ func formatBytes(bytes int64) string {
 }
 
 type BrowserDir struct {
-	FS   webdav.FileSystem
-	Name string
+	FS       webdav.FileSystem
+	Name     string
+	UserName string
 }
 
 func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
@@ -106,7 +108,7 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 			IsDir:   isDir,
 		})
 	}
-	data := TemplateData{Items: items}
+	data := TemplateData{UserName: b.UserName, Items: items}
 	err = tmpl.Execute(w, data)
 	if err != nil {
 		return

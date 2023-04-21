@@ -3,9 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <title>Dir Browser</title>
+
+    <style>
+        #customers {
+            font-family: Arial, Helvetica, sans-serif;
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        #customers td, #customers th {
+            border: 1px solid #ddd;
+            padding: 8px;
+        }
+
+        #customers tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+
+        #customers tr:hover {
+            background-color: #ddd;
+        }
+
+        #customers th {
+            padding-top: 12px;
+            padding-bottom: 12px;
+            text-align: left;
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        a {
+            color: #222222;
+        }
+    </style>
 </head>
 <body>
-<table style="border: 0">
+<h1 style="margin-bottom: 0;">WebDAV</h1>
+<div style="float: right;">User: {{.UserName}}</div>
+<table id="customers">
     <tr>
         <th>Name</th>
         <th>Type</th>
@@ -14,7 +49,7 @@
         <th>Last modified</th>
     </tr>
     <tr>
-        <td><a href="..">..</a></td>
+        <td class="first_row" onclick="window.location.href='..'">..</td>
         <td>Dir</td>
         <td>-</td>
         <td>-</td>
@@ -22,7 +57,7 @@
     </tr>
     {{range .Items}}
     <tr>
-        <td><a href="{{.Path}}">{{.Name}}</a></td>
+        <td class="first_row" onclick="window.location.href='{{.Path}}'">{{.Name}}</td>
         <td>{{.IsDir}}</td>
         <td>{{.Size}}</td>
         <td>{{.Mode}}</td>
@@ -31,8 +66,18 @@
     {{else}}
     <tr>
         <td>No items found.</td>
+        <td></td>
+        <td></td>
+        <td></td>
+        <td></td>
     </tr>
     {{end}}
 </table>
+<script>
+    first_rows = document.getElementsByClassName('first_row')
+    for (const i in first_rows) {
+        first_rows[i].style = 'cursor:pointer'
+    }
+</script>
 </body>
 </html>

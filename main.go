@@ -82,7 +82,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if stat.IsDir() {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			bd := frontend.BrowserDir{FS: h.handler.FileSystem, Name: r.URL.Path}
+			bd := frontend.BrowserDir{FS: h.handler.FileSystem, Name: r.URL.Path, UserName: h.username}
 			err = bd.MakeHTML(w)
 			if err != nil {
 				return

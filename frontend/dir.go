@@ -89,10 +89,12 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 		var isDir string
 		var mode string
 		var size string
+		name := fileStat.Name()
 		if fileStat.IsDir() {
 			isDir = "Dir"
 			mode = "-"
 			size = "-"
+			name += "/"
 		} else {
 			isDir = "File"
 			mode = strconv.FormatUint(uint64(fileStat.Mode()), 10)
@@ -100,7 +102,7 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 		}
 
 		items = append(items, TemplateItem{
-			Name:    fileStat.Name(),
+			Name:    name,
 			Path:    "/" + fileStat.Name(),
 			Size:    size,
 			Mode:    mode,

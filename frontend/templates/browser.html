@@ -5,42 +5,38 @@
     <title>Dir Browser</title>
 
     <style>
-        #customers {
+        #files_table {
             font-family: Arial, Helvetica, sans-serif;
             border-collapse: collapse;
             width: 100%;
         }
 
-        #customers td, #customers th {
+        #files_table td, #files_table th {
             border: 1px solid #ddd;
             padding: 8px;
         }
 
-        #customers tr:nth-child(even) {
+        #files_table tr:nth-child(even) {
             background-color: #f2f2f2;
         }
 
-        #customers tr:hover {
+        #files_table tr:hover {
             background-color: #ddd;
         }
 
-        #customers th {
+        #files_table th {
             padding-top: 12px;
             padding-bottom: 12px;
             text-align: left;
             background-color: #4CAF50;
             color: white;
         }
-
-        a {
-            color: #222222;
-        }
     </style>
 </head>
 <body>
 <h1 style="margin-bottom: 0;">WebDAV</h1>
 <div style="float: right;">User: {{.UserName}}</div>
-<table id="customers">
+<table id="files_table">
     <tr>
         <th>Name</th>
         <th>Type</th>

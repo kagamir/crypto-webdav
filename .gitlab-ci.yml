@@ -1,4 +1,5 @@
 stages:
+  - dockerhub
   - build
 
 
@@ -14,7 +15,7 @@ build-tag:
     DOCKER_BUILDKIT: "1"
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - echo "$docker_passwd" | docker login -u kagamir --password-stdin
+    - echo "$DOCKER_HUB_API_KEY" | docker login -u kagamir --password-stdin
     - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
     - docker buildx create --name multiarch-builder
     - docker buildx use multiarch-builder
@@ -22,6 +23,15 @@ build-tag:
     - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav:$CI_COMMIT_REF_NAME --push .
   only:
     - tags
+
+
+dockerhub:
+  stage: dockerhub
+  image: python:3.9-slim-bullseye
+  before_script:
+    - pip install requests
+  script:
+    - python sync_dockerhub.py
 
 
 build-latest:
@@ -36,7 +46,7 @@ build-latest:
     DOCKER_BUILDKIT: "1"
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - echo "$docker_passwd" | docker login -u kagamir --password-stdin
+    - echo "$DOCKER_HUB_API_KEY" | docker login -u kagamir --password-stdin
     - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
     - docker buildx create --name multiarch-builder
     - docker buildx use multiarch-builder

@@ -14,8 +14,7 @@ build-tag:
   before_script:
     - docker login -u kagamir -p $docker_passwd
   script:
-    - docker build -t kagamir/crypto-webdav:$CI_COMMIT_REF_NAME .
-    - docker push kagamir/crypto-webdav:$CI_COMMIT_REF_NAME
+    - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav:$CI_COMMIT_REF_NAME --push .
   only:
     - tags
 
@@ -32,7 +31,6 @@ build-latest:
   before_script:
     - docker login -u kagamir -p $docker_passwd
   script:
-    - docker build -t kagamir/crypto-webdav:latest .
-    - docker push kagamir/crypto-webdav:latest
+    - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav --push .
   only:
     - master

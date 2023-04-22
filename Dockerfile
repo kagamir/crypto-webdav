@@ -1,5 +1,4 @@
 FROM golang:1.20 AS builder
-ENV GOPROXY=http://goproxy.cn,direct
 COPY . /build
 WORKDIR /build
 RUN go build -o crypto-webdav .

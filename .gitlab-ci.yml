@@ -6,10 +6,12 @@ build-tag:
   stage: build
   image: docker:latest
   services:
-    - docker:dind
+    - name: docker:dind
+      alias: docker
   variables:
     DOCKER_DRIVER: overlay2
     DOCKER_HOST: tcp://docker:2375
+    DOCKER_BUILDKIT: "1"
     DOCKER_TLS_CERTDIR: ""
   before_script:
     - docker login -u kagamir -p $docker_passwd
@@ -23,13 +25,20 @@ build-latest:
   stage: build
   image: docker:latest
   services:
-    - docker:dind
+    - name: docker:dind
+      alias: docker
   variables:
     DOCKER_DRIVER: overlay2
     DOCKER_HOST: tcp://docker:2375
+    DOCKER_BUILDKIT: "1"
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - docker login -u kagamir -p $docker_passwd
+    - apk add --no-cache git
+    - echo "$docker_passwd" | docker login -u kagamir --password-stdin
+    - apk add --update --no-cache curl jq
+    - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+    - docker buildx create --name multiarch-builder
+    - docker buildx use multiarch-builder
   script:
     - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav --push .
   only:

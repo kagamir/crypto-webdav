@@ -24,6 +24,11 @@
             background-color: #ddd;
         }
 
+        #files_table tr td:nth-child(1) span:hover {
+            text-decoration: underline;
+            cursor:pointer
+        }
+
         #files_table th {
             padding-top: 12px;
             padding-bottom: 12px;
@@ -45,7 +50,7 @@
         <th>Last modified</th>
     </tr>
     <tr>
-        <td class="first_row" onclick="window.location.href='..'">..</td>
+        <td><span onclick="window.location.href='..'">..</span></td>
         <td>Dir</td>
         <td>-</td>
         <td>-</td>
@@ -53,7 +58,7 @@
     </tr>
     {{range .Items}}
     <tr>
-        <td class="first_row" onclick="window.location.href='{{.Path}}'">{{.Name}}</td>
+        <td><span onclick="window.location.href='{{.Path}}'">{{.Name}}</span></td>
         <td>{{.IsDir}}</td>
         <td>{{.Size}}</td>
         <td>{{.Mode}}</td>
@@ -65,11 +70,5 @@
     </tr>
     {{end}}
 </table>
-<script>
-    first_rows = document.getElementsByClassName('first_row')
-    for (const i in first_rows) {
-        first_rows[i].style = 'cursor:pointer'
-    }
-</script>
 </body>
 </html>

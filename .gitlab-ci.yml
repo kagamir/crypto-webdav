@@ -1,6 +1,6 @@
 stages:
-  - dockerhub
   - build
+  - dockerhub
 
 
 build-tag:
@@ -25,15 +25,6 @@ build-tag:
     - tags
 
 
-dockerhub:
-  stage: dockerhub
-  image: python:3.9-slim-bullseye
-  before_script:
-    - pip install requests
-  script:
-    - python sync_dockerhub.py
-
-
 build-latest:
   stage: build
   image: docker:latest
@@ -54,3 +45,15 @@ build-latest:
     - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav --push .
   only:
     - master
+
+
+dockerhub:
+  stage: dockerhub
+  image: python:3.9-slim-bullseye
+  before_script:
+    - pip install requests
+  script:
+    - python sync_dockerhub.py
+  only:
+    - master
+

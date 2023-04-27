@@ -9,6 +9,7 @@ import (
 	"golang.org/x/net/webdav"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 )
 
@@ -46,7 +47,7 @@ func (h *Handler) login() bool {
 func (h *Handler) makeWebdav() {
 	dirPath := "./upload/" + h.username
 	h.handler = &webdav.Handler{
-		FileSystem: crypto.CryptoFS{Dir: webdav.Dir(dirPath)},
+		FileSystem: crypto.FileCrypto{Dir: webdav.Dir(dirPath)},
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(r *http.Request, err error) {
 			if err != nil {

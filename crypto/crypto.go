@@ -17,7 +17,7 @@ func Sha256(s string) (hash []byte) {
 	return
 }
 
-type CryptoFS struct {
+type FileCrypto struct {
 	webdav.Dir
 }
 
@@ -28,7 +28,7 @@ func slashClean(name string) string {
 	return path.Clean(name)
 }
 
-func (c CryptoFS) resolve(name string) string {
+func (c FileCrypto) resolve(name string) string {
 	// This implementation is based on Dir.Open's code in the standard net/http package.
 	if filepath.Separator != '/' && strings.IndexRune(name, filepath.Separator) >= 0 ||
 		strings.Contains(name, "\x00") {
@@ -41,7 +41,7 @@ func (c CryptoFS) resolve(name string) string {
 	return filepath.Join(dir, filepath.FromSlash(slashClean(name)))
 }
 
-func (c CryptoFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
+func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	name = c.resolve(name)
 	if name == "" {
 		return nil, os.ErrNotExist

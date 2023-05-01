@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 )
@@ -101,9 +102,14 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 			size = formatBytes(fileStat.Size())
 		}
 
+		path, err := url.JoinPath(b.Name, fileStat.Name())
+		if err != nil {
+			log.Println(err)
+			return
+		}
 		items = append(items, TemplateItem{
 			Name:    name,
-			Path:    "/" + fileStat.Name(),
+			Path:    path,
 			Size:    size,
 			Mode:    mode,
 			ModTime: fileStat.ModTime().Format("2006-01-02 15:04:05"),

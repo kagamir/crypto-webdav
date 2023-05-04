@@ -102,9 +102,9 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 			size = formatBytes(fileStat.Size())
 		}
 
-		path, err := url.JoinPath(b.Name, fileStat.Name())
-		if err != nil {
-			log.Println(err)
+		path, innerErr := url.JoinPath(b.Name, fileStat.Name())
+		if innerErr != nil {
+			log.Println(innerErr)
 			return
 		}
 		items = append(items, TemplateItem{

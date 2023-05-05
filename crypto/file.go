@@ -106,13 +106,8 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 			}
 
 		} else {
-			_, err = fp.Seek(0, io.SeekStart)
-			if handleError(inErr); inErr != nil {
-				return inErr
-			}
-
-			_, err = fp.Read(nonce)
-			if handleError(inErr); inErr != nil {
+			_, err = fp.ReadAt(nonce, 0)
+			if handleError(err); err != nil {
 				return inErr
 			}
 		}

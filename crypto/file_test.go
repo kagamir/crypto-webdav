@@ -16,7 +16,7 @@ func assert(result any, expected any, msg string, t *testing.T) {
 func TestFile1(t *testing.T) {
 	f := &EncryptedFile{}
 	key := []byte("1234567890123456")
-	err := f.Open("/tmp/goTest.txt", os.O_RDWR|os.O_TRUNC, 0755, key)
+	err := f.Open("./goTest.txt", os.O_RDWR|os.O_TRUNC, 0755, key)
 	assert(err, nil, "open error", t)
 
 	data := []byte("123456789ABCEDF123456789ABCEDF123")

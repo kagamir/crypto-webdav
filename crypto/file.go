@@ -49,12 +49,18 @@ func (a *AesCtr) Decrypt(ciphertext []byte, position int64) ([]byte, error) {
 	stream := cipher.NewCTR(block, iv)
 
 	offset := position % BlockSize
+	textLength := int64(len(ciphertext))
+
 	padding := make([]byte, offset)
 	ciphertext = append(padding, ciphertext...)
-	plaintext := make([]byte, len(ciphertext))
+
+	plaintext := make([]byte, textLength+offset)
+
 	stream.XORKeyStream(plaintext, ciphertext)
 
-	return plaintext[offset:], nil
+	value := make([]byte, textLength)
+	copy(value, plaintext[offset:])
+	return value, nil
 }
 
 func (a *AesCtr) Encrypt(plaintext []byte, position int64) ([]byte, error) {

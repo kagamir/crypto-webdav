@@ -1,65 +1,71 @@
+# You can override the included template(s) by including variable overrides
+# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
+# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/#customizing-settings
+# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
+# Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
+# Note that environment variables can be set in several places
+# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
 stages:
-  - test
-  - build
-  - dockerhub
-
+- test
+- build
+- dockerhub
 test:
   stage: test
   image: golang:1.20
   script:
-    - go test -v -cover ./...
-
+  - go test -v -cover ./...
 build-tag:
   stage: build
   image: docker:latest
   services:
-    - name: docker:dind
-      alias: docker
+  - name: docker:dind
+    alias: docker
   variables:
     DOCKER_DRIVER: overlay2
     DOCKER_HOST: tcp://docker:2375
-    DOCKER_BUILDKIT: "1"
-    DOCKER_TLS_CERTDIR: ""
+    DOCKER_BUILDKIT: '1'
+    DOCKER_TLS_CERTDIR: ''
   before_script:
-    - echo "$DOCKER_HUB_API_KEY" | docker login -u kagamir --password-stdin
-    - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-    - docker buildx create --name multiarch-builder
-    - docker buildx use multiarch-builder
+  - echo "$DOCKER_HUB_API_KEY" | docker login -u kagamir --password-stdin
+  - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+  - docker buildx create --name multiarch-builder
+  - docker buildx use multiarch-builder
   script:
-    - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav:$CI_COMMIT_REF_NAME --push .
+  - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav:$CI_COMMIT_REF_NAME
+    --push .
   only:
-    - tags
-
-
+  - tags
 build-latest:
   stage: build
   image: docker:latest
   services:
-    - name: docker:dind
-      alias: docker
+  - name: docker:dind
+    alias: docker
   variables:
     DOCKER_DRIVER: overlay2
     DOCKER_HOST: tcp://docker:2375
-    DOCKER_BUILDKIT: "1"
-    DOCKER_TLS_CERTDIR: ""
+    DOCKER_BUILDKIT: '1'
+    DOCKER_TLS_CERTDIR: ''
   before_script:
-    - echo "$DOCKER_HUB_API_KEY" | docker login -u kagamir --password-stdin
-    - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-    - docker buildx create --name multiarch-builder
-    - docker buildx use multiarch-builder
+  - echo "$DOCKER_HUB_API_KEY" | docker login -u kagamir --password-stdin
+  - docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
+  - docker buildx create --name multiarch-builder
+  - docker buildx use multiarch-builder
   script:
-    - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav --push .
+  - docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t kagamir/crypto-webdav
+    --push .
   only:
-    - master
-
-
+  - master
 dockerhub:
   stage: dockerhub
   image: python:3.9-slim-bullseye
   before_script:
-    - pip install requests
+  - pip install requests
   script:
-    - python sync_dockerhub.py
+  - python sync_dockerhub.py
   only:
-    - master
-
+  - master
+sast:
+  stage: test
+include:
+- template: Security/SAST.gitlab-ci.yml

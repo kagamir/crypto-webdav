@@ -13,7 +13,7 @@
 
         #files_table td, #files_table th {
             border: 1px solid #ddd;
-            padding: 8px;
+            padding: 1em;
         }
 
         #files_table tr:nth-child(even) {
@@ -26,12 +26,12 @@
 
         #files_table tr td:nth-child(1) span:hover {
             text-decoration: underline;
-            cursor:pointer
+            cursor: pointer
         }
 
         #files_table th {
-            padding-top: 12px;
-            padding-bottom: 12px;
+            padding-top: 1em;
+            padding-bottom: 1em;
             text-align: left;
             background-color: #4CAF50;
             color: white;
@@ -40,7 +40,15 @@
 </head>
 <body>
 <h1 style="margin-bottom: 0;">WebDAV</h1>
-<div style="float: right;">User: {{.UserName}}</div>
+<div style="float: right;">
+    <p>User: {{.UserName}}</p>
+</div>
+<div>
+    <input type="file" id="fileInput" style="display:none;">
+    <button style="margin-top: 2em; margin-bottom: 1em; height: 3em; width: 6em" onclick="chooseFile()">
+        Upload
+    </button>
+</div>
 <table id="files_table">
     <tr>
         <th>Name</th>
@@ -70,5 +78,43 @@
     </tr>
     {{end}}
 </table>
+
+<script>
+    function chooseFile() {
+        document.getElementById('fileInput').click();
+    }
+
+    document.getElementById('fileInput').addEventListener('change', function () {
+        let file = this.files[0];
+
+        if (file) {
+            let fileName = file.name;
+            let reader = new FileReader();
+            reader.onload = function (event) {
+                let fileContent = event.target.result;
+                uploadFile(fileName, fileContent);
+            };
+            reader.readAsArrayBuffer(file)
+        }
+    });
+
+    function uploadFile(fileName, fileContent) {
+        fetch(window.location.pathname + fileName, {
+            method: 'PUT',
+            body: fileContent
+        })
+            .then(response => {
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert("Error: " + response.status)
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert("Error: " + error)
+            });
+    }
+</script>
 </body>
 </html>

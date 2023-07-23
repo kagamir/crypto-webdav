@@ -9,7 +9,7 @@ import (
 	"golang.org/x/net/webdav"
 	"log"
 	"net/http"
-	_ "net/http/pprof"
+	//_ "net/http/pprof"
 	"os"
 )
 

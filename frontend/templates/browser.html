@@ -43,11 +43,10 @@
 <div style="float: right;">
     <p>User: {{.UserName}}</p>
 </div>
-<div>
+<div style="margin-top: 2em; margin-bottom: 1em; ">
     <input type="file" id="fileInput" style="display:none;">
-    <button style="margin-top: 2em; margin-bottom: 1em; height: 3em; width: 6em" onclick="chooseFile()">
-        Upload
-    </button>
+    <button style="height: 3em; width: 6em" onclick="chooseFile()">Upload</button>
+    <button style="margin-left:1em; height: 3em; width: 6em" onclick="makeDir()">New Dir</button>
 </div>
 <table id="files_table">
     <tr>
@@ -56,6 +55,7 @@
         <th>Size</th>
         <th>Mode</th>
         <th>Last modified</th>
+        <th>Action</th>
     </tr>
     <tr>
         <td><span onclick="window.location.href='..'">..</span></td>
@@ -63,22 +63,34 @@
         <td>-</td>
         <td>-</td>
         <td>-</td>
+        <td>-</td>
     </tr>
     {{range .Items}}
     <tr>
-        <td><span onclick="window.location.href='{{.Path}}'">{{.Name}}</span></td>
+        <td><span onclick="window.location.href='{{.Path}}/'">{{.Name}}</span></td>
         <td>{{.IsDir}}</td>
         <td>{{.Size}}</td>
         <td>{{.Mode}}</td>
         <td>{{.ModTime}}</td>
+        <td>
+            <button onclick="deleteFile('{{.Name}}','{{.IsDir}}')">Delete</button>
+        </td>
     </tr>
     {{else}}
     <tr>
-        <td colspan=5>No items found.</td>
+        <td colspan=6>No items found.</td>
     </tr>
     {{end}}
 </table>
-
+<script>
+    function pathJoin(a, b) {
+        if (a === "/") {
+            return a + b
+        } else {
+            return a + "/" + b
+        }
+    }
+</script>
 <script>
     function chooseFile() {
         document.getElementById('fileInput').click();
@@ -99,7 +111,7 @@
     });
 
     function uploadFile(fileName, fileContent) {
-        fetch(window.location.pathname + fileName, {
+        fetch(pathJoin(window.location.pathname, fileName), {
             method: 'PUT',
             body: fileContent
         })
@@ -114,6 +126,54 @@
                 console.error('Error:', error);
                 alert("Error: " + error)
             });
+    }
+</script>
+<script>
+    function deleteFile(fileName, fileType) {
+        let ok = window.confirm("Are you sure you want to DELETE " + fileType + " " + fileName + " ?")
+        if (!ok) {
+            return
+        }
+
+        fetch(pathJoin(window.location.pathname, fileName), {
+            method: 'DELETE'
+        })
+            .then(response => {
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert("Error: " + response.status)
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert("Error: " + error)
+            });
+    }
+
+</script>
+<script>
+    function makeDir() {
+        let dirName = prompt("Dir name：", "new_dir");
+        if (dirName == null || dirName === "") {
+            return
+        }
+        console.log(window.location.pathname)
+        fetch(pathJoin(window.location.pathname, dirName), {
+            method: 'MKCOL'
+        })
+            .then(response => {
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert("Error: " + response.status)
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert("Error: " + error)
+            });
+
     }
 </script>
 </body>

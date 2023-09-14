@@ -5,10 +5,12 @@ import (
 	"crypto-webdav/crypto"
 	"crypto-webdav/frontend"
 	"errors"
-	auth "github.com/abbot/go-http-auth"
-	"golang.org/x/net/webdav"
 	"log"
 	"net/http"
+
+	auth "github.com/abbot/go-http-auth"
+	"golang.org/x/net/webdav"
+
 	//_ "net/http/pprof"
 	"os"
 )
@@ -62,14 +64,18 @@ func (h *Handler) makeWebdav() {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.writer = w
 	h.request = r
-	ok := h.login()
-	if !ok {
-		return
+
+	if r.Method != http.MethodOptions {
+		ok := h.login()
+		if !ok {
+			return
+		}
 	}
+
 	h.makeWebdav()
 
 	if r.Method == http.MethodGet {
-		stat, err := h.handler.FileSystem.Stat(nil, r.URL.Path)
+		stat, err := h.handler.FileSystem.Stat(context.TODO(), r.URL.Path)
 		if err != nil {
 			var pathError *os.PathError
 			if errors.As(err, &pathError) {
@@ -88,8 +94,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+
+	} else {
+		h.handler.ServeHTTP(h.writer, h.request)
 	}
-	h.handler.ServeHTTP(h.writer, h.request)
 }
 
 func main() {

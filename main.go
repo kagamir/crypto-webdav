@@ -64,14 +64,10 @@ func (h *Handler) makeWebdav() {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.writer = w
 	h.request = r
-
-	if r.Method != http.MethodOptions {
-		ok := h.login()
-		if !ok {
-			return
-		}
+	ok := h.login()
+	if !ok {
+		return
 	}
-
 	h.makeWebdav()
 
 	if r.Method == http.MethodGet {
@@ -94,10 +90,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-
-	} else {
-		h.handler.ServeHTTP(h.writer, h.request)
 	}
+	h.handler.ServeHTTP(h.writer, h.request)
 }
 
 func main() {

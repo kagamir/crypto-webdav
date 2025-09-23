@@ -27,11 +27,12 @@ Mount the htpasswd file to `/htpasswd`, where the specified username and passwor
 Example:
 
 ```bash
+docker build -t crypto-webdav .
 docker run --restart always -v /somewhere/dav:/upload \
 	-v /somewhere/htpasswd:/htpasswd \
 	-e WEBDAV_ADDRESS=0.0.0.0:8080 \
 	-e WEBDAV_HTPASSWD_FILE=/htpasswd \
-	-p 8080:8080 --name crypto-webdav -itd kagamir/crypto-webdav
+	-p 8080:8080 --name crypto-webdav -d crypto-webdav
 ```
 
 Suggest using reverse proxy software to enable HTTPS.

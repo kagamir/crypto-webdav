@@ -97,24 +97,23 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 	}
 
 	if !fileInfo.IsDir() {
-		var inErr error
 		fileLen := fileInfo.Size()
 		nonce := make([]byte, BlockSize)
 		if fileLen == 0 {
 			log.Println("[Open] New", name)
 			_, err = rand.Read(nonce)
-			if handleError(inErr); inErr != nil {
-				return inErr
+			if handleError(err); err != nil {
+				return err
 			}
 			_, err = fp.Write(nonce)
-			if handleError(inErr); inErr != nil {
-				return inErr
+			if handleError(err); err != nil {
+				return err
 			}
 
 		} else {
 			_, err = fp.ReadAt(nonce, 0)
 			if handleError(err); err != nil {
-				return inErr
+				return err
 			}
 		}
 		e.filePointer = fp

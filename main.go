@@ -15,9 +15,13 @@ import (
 	"os"
 )
 
-const (
-	address = "0.0.0.0:8080"
-)
+func getAddress() string {
+	address := os.Getenv("WEBDAV_ADDRESS")
+	if address == "" {
+		address = "0.0.0.0:8080"
+	}
+	return address
+}
 
 type Handler struct {
 	writer   http.ResponseWriter
@@ -106,6 +110,7 @@ func main() {
 		handler.ServeHTTP(w, r)
 	})
 
+	address := getAddress()
 	log.Printf("WebDAV server running at %s", address)
 	log.Fatal("[FATAL] ", http.ListenAndServe(address, nil))
 }

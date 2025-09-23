@@ -3,11 +3,12 @@ package crypto
 import (
 	"context"
 	"crypto/sha256"
-	"golang.org/x/net/webdav"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/net/webdav"
 )
 
 func Sha256(s string) (hash []byte) {
@@ -30,7 +31,7 @@ func slashClean(name string) string {
 
 func (c FileCrypto) resolve(name string) string {
 	// This implementation is based on Dir.Open's code in the standard net/http package.
-	if filepath.Separator != '/' && strings.IndexRune(name, filepath.Separator) >= 0 ||
+	if filepath.Separator != '/' && strings.ContainsRune(name, filepath.Separator) ||
 		strings.Contains(name, "\x00") {
 		return ""
 	}

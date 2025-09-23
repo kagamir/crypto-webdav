@@ -1,4 +1,4 @@
-FROM golang:1.20 AS builder
+FROM golang:1.24 AS builder
 COPY . /build
 WORKDIR /build
 RUN go build -o crypto-webdav .

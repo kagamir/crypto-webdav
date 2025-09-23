@@ -12,8 +12,8 @@ type Htpasswd struct {
 }
 
 func (h *Htpasswd) Init() (err error) {
-	htpasswdPath, ok := os.LookupEnv("WEBDAV_HTPASSWD_FILE")
-	if !ok {
+	htpasswdPath := os.Getenv("WEBDAV_HTPASSWD_FILE")
+	if htpasswdPath == "" {
 		htpasswdPath = "./htpasswd"
 	}
 	passwords, err := htpasswd.ParseHtpasswdFile(htpasswdPath)

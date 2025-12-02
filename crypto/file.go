@@ -8,8 +8,6 @@ import (
 	"io/fs"
 	"math/big"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -87,7 +85,7 @@ type EncryptedFile struct {
 	filePointer *os.File
 	aes         *AesCtr
 	ptrPos      int64
-	// 新文件相关字段
+	// 下列字段在新索引结构中不再用于重命名或写入元信息，但保留以兼容现有逻辑
 	originalName string // 原始文件名
 	parentDir    string // 父目录路径
 	isNewFile    bool   // 是否为新文件
@@ -191,49 +189,6 @@ func (e *EncryptedFile) Close() (err error) {
 	// 关闭文件指针
 	err = e.filePointer.Close()
 	if err != nil {
-		return err
-	}
-
-	// 如果是新文件，需要计算哈希并重命名，创建元信息
-	if e.isNewFile && e.originalName != "" {
-		return e.finalizeNewFile()
-	}
-
-	return nil
-}
-
-// finalizeNewFile 完成新文件的创建：计算哈希、重命名、创建元信息
-func (e *EncryptedFile) finalizeNewFile() error {
-	// 计算文件内容哈希
-	hash, err := CalculateFileContentHash(e.actualPath, e.key)
-	if err != nil {
-		return err
-	}
-
-	// 构建新的文件路径
-	newPath := filepath.Join(e.parentDir, hash)
-
-	// 如果临时文件名已经是正确的哈希，不需要重命名
-	if filepath.Base(e.actualPath) != hash {
-		// 重命名文件
-		if err := os.Rename(e.actualPath, newPath); err != nil {
-			return err
-		}
-		e.actualPath = newPath
-	}
-
-	// 创建元信息文件
-	metaPath := GetMetadataFilePath(newPath)
-	metadata := &Metadata{
-		Name:    e.originalName,
-		Size:    e.fileSize,
-		ModTime: time.Now(),
-		IsDir:   false,
-	}
-
-	if err := WriteMetadataFile(metaPath, metadata, e.key); err != nil {
-		// 如果元信息写入失败，尝试恢复
-		os.Remove(newPath)
 		return err
 	}
 

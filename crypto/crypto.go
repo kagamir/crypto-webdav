@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -80,241 +81,312 @@ func (c FileCrypto) resolve(ctx context.Context, name string) (string, error) {
 }
 
 func (c FileCrypto) Stat(ctx context.Context, name string) (os.FileInfo, error) {
-	resolvedPath, err := c.resolve(ctx, name)
-	if err != nil {
-		return nil, err
+	// 使用逻辑索引进行 Stat，而不是实际目录结构
+	// 逻辑根目录
+	if name == "" {
+		name = "/"
 	}
 
-	// 获取实际文件信息
-	actualInfo, err := os.Stat(resolvedPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// 如果是目录，直接返回（目录的元信息在 ListDirectory 中处理）
-	if actualInfo.IsDir() {
-		// 读取目录元信息
-		key := c.getKey(ctx)
-		metaPath := GetMetadataFilePath(resolvedPath)
-		metadata, err := ReadMetadataFile(metaPath, key)
-		if err != nil {
-			// 如果元信息不存在，返回基本文件信息
-			return actualInfo, nil
-		}
-		return &MetadataFileInfo{
-			FileInfo: actualInfo,
-			metadata: metadata,
-		}, nil
-	}
-
-	// 读取文件元信息
-	key := c.getKey(ctx)
-	metaPath := GetMetadataFilePath(resolvedPath)
-	metadata, err := ReadMetadataFile(metaPath, key)
-	if err != nil {
-		// 如果元信息不存在，返回基本文件信息
-		return actualInfo, nil
-	}
-
-	return &MetadataFileInfo{
-		FileInfo: actualInfo,
-		metadata: metadata,
-	}, nil
-}
-
-func (c FileCrypto) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
-	log.Info().Str("path", name).Msg("Creating directory")
-
-	// 解析父目录路径
-	parentPath := filepath.Dir(name)
-	if parentPath == "." || parentPath == "/" {
-		parentPath = "/"
-	}
-
-	// 获取目录名
-	dirName := filepath.Base(name)
-	if dirName == "." || dirName == "/" {
-		dirName = ""
-	}
-
-	// 解析父目录
-	resolvedParent, err := c.resolve(ctx, parentPath)
-	if err != nil {
-		return err
-	}
-
-	// 获取加密密钥
-	key := c.getKey(ctx)
-	if key == nil {
-		return os.ErrPermission
-	}
-
-	// 确保目录存在（使用哈希名）
-	_, err = EnsureDirectoryExists(resolvedParent, dirName, key)
-	return err
-}
-
-func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
-	// 解析路径
-	resolvedPath, err := c.resolve(ctx, name)
-	if err != nil {
-		// 如果文件不存在且是创建模式，需要创建新文件
-		if os.IsNotExist(err) && (flag&os.O_CREATE != 0) {
-			// 解析父目录
-			parentPath := filepath.Dir(name)
-			if parentPath == "." || parentPath == "/" {
-				parentPath = "/"
-			}
-			fileName := filepath.Base(name)
-
-			resolvedParent, err := c.resolve(ctx, parentPath)
-			if err != nil {
-				return nil, err
-			}
-
-			key := c.getKey(ctx)
-			if key == nil {
-				return nil, os.ErrPermission
-			}
-
-			// 创建临时文件，稍后计算哈希后重命名
-			// 使用临时文件名
-			tempHash := GetNameHash(fileName + time.Now().String())
-			tempPath := filepath.Join(resolvedParent, tempHash)
-
-			f := &EncryptedFile{originalName: fileName, parentDir: resolvedParent, isNewFile: true}
-			err = f.Open(tempPath, flag, perm, key)
-			if err != nil {
-				return nil, err
-			}
-			return f, nil
-		}
-		return nil, err
-	}
-
-	// 获取加密密钥
 	key := c.getKey(ctx)
 	if key == nil {
 		return nil, os.ErrPermission
 	}
 
-	// 打开现有文件
-	f := &EncryptedFile{actualPath: resolvedPath}
-	err = f.Open(resolvedPath, flag, perm, key)
+	baseDir := filepath.Clean(string(c.Dir))
+	index, err := LoadIndex(baseDir, key)
 	if err != nil {
 		return nil, err
 	}
-	return f, nil
+
+	node, err := findNodeByPath(index, name)
+	if err != nil {
+		return nil, err
+	}
+
+	if node.IsDir {
+		return dirNodeFileInfo(node), nil
+	}
+
+	// 文件：读取物理文件信息来补充大小/时间
+	physicalPath := fileNodePhysicalPath(baseDir, node)
+	physicalInfo, err := os.Stat(physicalPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return fileNodeFileInfo(node, physicalInfo), nil
 }
 
-func (c FileCrypto) RemoveAll(ctx context.Context, name string) error {
-	log.Info().Str("path", name).Msg("Removing path")
+func (c FileCrypto) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
+	log.Info().Str("path", name).Msg("Creating logical directory")
 
-	resolvedPath, err := c.resolve(ctx, name)
+	if name == "" {
+		name = "/"
+	}
+
+	key := c.getKey(ctx)
+	if key == nil {
+		return os.ErrPermission
+	}
+
+	baseDir := filepath.Clean(string(c.Dir))
+	index, err := LoadIndex(baseDir, key)
 	if err != nil {
-		log.Error().
-			Str("path", name).
-			Err(err).
-			Msg("Failed to resolve path for removal")
 		return err
 	}
 
-	log.Debug().Str("resolved_path", resolvedPath).Msg("Resolved path for removal")
-
-	baseDir := filepath.Clean(string(c.Dir))
-	if resolvedPath == baseDir {
-		// Prohibit removing the virtual root directory.
+	// WebDAV 语义：父目录必须存在
+	parent, dirName, err := findParentAndName(index, name)
+	if err != nil {
+		return err
+	}
+	if !parent.IsDir {
 		return os.ErrInvalid
 	}
 
-	// 删除实际文件和元信息文件
-	if err := os.RemoveAll(resolvedPath); err != nil {
-		log.Error().
-			Str("resolved_path", resolvedPath).
-			Err(err).
-			Msg("Failed to remove path")
+	if parent.Children == nil {
+		parent.Children = make(map[string]*FileNode)
+	}
+	if _, exists := parent.Children[dirName]; exists {
+		return os.ErrExist
+	}
+
+	now := time.Now()
+	parent.Children[dirName] = &FileNode{
+		Name:     dirName,
+		IsDir:    true,
+		Children: make(map[string]*FileNode),
+		ModTime:  now,
+	}
+	parent.ModTime = now
+
+	return SaveIndex(index, baseDir, key)
+}
+
+func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
+	if name == "" {
+		name = "/"
+	}
+
+	key := c.getKey(ctx)
+	if key == nil {
+		return nil, os.ErrPermission
+	}
+
+	baseDir := filepath.Clean(string(c.Dir))
+	index, err := LoadIndex(baseDir, key)
+	if err != nil {
+		return nil, err
+	}
+
+	// 处理根目录
+	if name == "/" {
+		return newDirFile(index.Root, baseDir), nil
+	}
+
+	// 先查找是否已经存在节点
+	node, err := findNodeByPath(index, name)
+	if err != nil {
+		// 不存在
+		if !os.IsNotExist(err) && err != os.ErrNotExist {
+			return nil, err
+		}
+		// 仅在 O_CREATE 时允许创建新文件
+		if flag&os.O_CREATE == 0 {
+			return nil, err
+		}
+
+		// 创建新文件节点（父目录必须存在且为目录）
+		parent, fileName, err := findParentAndName(index, name)
+		if err != nil {
+			return nil, err
+		}
+		if !parent.IsDir {
+			return nil, os.ErrInvalid
+		}
+		if parent.Children == nil {
+			parent.Children = make(map[string]*FileNode)
+		}
+		if existing, ok := parent.Children[fileName]; ok && existing.IsDir {
+			// 目标是目录
+			return nil, os.ErrInvalid
+		}
+
+		newID, err := randomNodeID()
+		if err != nil {
+			return nil, err
+		}
+
+		now := time.Now()
+		node = &FileNode{
+			ID:      newID,
+			Name:    fileName,
+			IsDir:   false,
+			Size:    0,
+			ModTime: now,
+		}
+		parent.Children[fileName] = node
+		parent.ModTime = now
+
+		if err := SaveIndex(index, baseDir, key); err != nil {
+			return nil, err
+		}
+	}
+
+	// 目录：返回逻辑目录文件
+	if node.IsDir {
+		return newDirFile(node, baseDir), nil
+	}
+
+	// 文件：打开物理加密文件
+	physicalPath := fileNodePhysicalPath(baseDir, node)
+
+	// 确保 files 目录存在
+	if err := ensureBaseLayout(baseDir); err != nil {
+		return nil, err
+	}
+
+	// 创建物理文件（若需要）
+	if flag&os.O_CREATE != 0 {
+		if _, err := os.Stat(physicalPath); errors.Is(err, os.ErrNotExist) {
+			f, err := os.OpenFile(physicalPath, os.O_CREATE|os.O_WRONLY, perm)
+			if err != nil {
+				return nil, err
+			}
+			_ = f.Close()
+		}
+	}
+
+	enc := &EncryptedFile{}
+	if err := enc.Open(physicalPath, flag, perm, key); err != nil {
+		return nil, err
+	}
+
+	// 使用 LogicalFile 包装，在 Close 时更新索引
+	return &LogicalFile{
+		EncryptedFile: enc,
+		index:         index,
+		node:          node,
+		baseDir:       baseDir,
+		key:           key,
+	}, nil
+}
+
+func (c FileCrypto) RemoveAll(ctx context.Context, name string) error {
+	log.Info().Str("path", name).Msg("Removing logical path")
+
+	if name == "" || name == "/" || name == "." {
+		// 禁止删除虚拟根目录
+		return os.ErrInvalid
+	}
+
+	key := c.getKey(ctx)
+	if key == nil {
+		return os.ErrPermission
+	}
+
+	baseDir := filepath.Clean(string(c.Dir))
+	index, err := LoadIndex(baseDir, key)
+	if err != nil {
 		return err
 	}
 
-	metaPath := GetMetadataFilePath(resolvedPath)
-	if err := os.Remove(metaPath); err != nil && !os.IsNotExist(err) {
-		log.Warn().
-			Str("meta_path", metaPath).
-			Err(err).
-			Msg("Failed to remove metadata file")
-		// 继续执行，不返回错误
+	// 删除索引中的节点，并收集需要删除的物理文件 ID
+	node, err := deleteNode(index, name)
+	if err != nil {
+		return err
 	}
 
-	log.Info().Str("resolved_path", resolvedPath).Msg("Successfully removed path")
+	var ids []NodeID
+	collectFileIDs(node, &ids)
+
+	if err := SaveIndex(index, baseDir, key); err != nil {
+		return err
+	}
+
+	// 删除对应的物理加密文件
+	for _, id := range ids {
+		p := filepath.Join(baseDir, filesDirName, string(id))
+		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
+			log.Warn().
+				Str("resolved_path", p).
+				Err(err).
+				Msg("Failed to remove physical file")
+		}
+	}
+
+	log.Info().Str("path", name).Msg("Successfully removed logical path")
 	return nil
 }
 
 func (c FileCrypto) Rename(ctx context.Context, oldName, newName string) error {
-	oldPath, err := c.resolve(ctx, oldName)
+	key := c.getKey(ctx)
+	if key == nil {
+		return os.ErrPermission
+	}
+
+	if oldName == "" {
+		oldName = "/"
+	}
+	if newName == "" {
+		newName = "/"
+	}
+
+	baseDir := filepath.Clean(string(c.Dir))
+	index, err := LoadIndex(baseDir, key)
 	if err != nil {
 		return err
 	}
 
-	newPath, err := c.resolve(ctx, newName)
+	// 查找旧节点及其父目录
+	oldParent, oldBase, err := findParentAndName(index, oldName)
 	if err != nil {
-		// 如果新路径不存在，可能是重命名到新位置
-		// 解析新路径的父目录和文件名
-		newParentPath := filepath.Dir(newName)
-		if newParentPath == "." || newParentPath == "/" {
-			newParentPath = "/"
-		}
-		newFileName := filepath.Base(newName)
-
-		key := c.getKey(ctx)
-		if key == nil {
-			return os.ErrPermission
-		}
-
-		// 解析新父目录
-		newResolvedParent, err := c.resolve(ctx, newParentPath)
-		if err != nil {
-			return err
-		}
-
-		// 读取旧文件的元信息
-		oldMetaPath := GetMetadataFilePath(oldPath)
-		oldMetadata, err := ReadMetadataFile(oldMetaPath, key)
-		if err != nil {
-			return err
-		}
-
-		// 更新元信息中的名称
-		oldMetadata.Name = newFileName
-		oldMetadata.ModTime = time.Now()
-
-		// 如果是文件，需要重新计算哈希（因为内容可能改变，但这里只是重命名，内容不变）
-		// 对于重命名，我们保持相同的哈希，只更新元信息
-		hash := filepath.Base(oldPath)
-
-		// 移动文件
-		newActualPath := filepath.Join(newResolvedParent, hash)
-		if err := os.Rename(oldPath, newActualPath); err != nil {
-			return err
-		}
-
-		// 更新元信息文件
-		newMetaPath := GetMetadataFilePath(newActualPath)
-		if err := WriteMetadataFile(newMetaPath, oldMetadata, key); err != nil {
-			return err
-		}
-
-		// 删除旧元信息文件
-		os.Remove(oldMetaPath)
-
-		return nil
+		return err
+	}
+	if oldParent.Children == nil {
+		return os.ErrNotExist
+	}
+	node, ok := oldParent.Children[oldBase]
+	if !ok {
+		return os.ErrNotExist
 	}
 
-	baseDir := filepath.Clean(string(c.Dir))
-	if oldPath == baseDir || newPath == baseDir {
-		// Prohibit renaming from or to the virtual root directory.
+	// 新父目录
+	newParent, newBase, err := findParentAndName(index, newName)
+	if err != nil {
+		return err
+	}
+	if !newParent.IsDir {
 		return os.ErrInvalid
 	}
+	if newParent.Children == nil {
+		newParent.Children = make(map[string]*FileNode)
+	}
 
-	// 简单重命名（这种情况应该不会发生，因为路径已经解析为哈希）
-	return os.Rename(oldPath, newPath)
+	// 如果目标已存在，先删除（简单覆盖语义）
+	if existing, ok := newParent.Children[newBase]; ok {
+		var ids []NodeID
+		collectFileIDs(existing, &ids)
+		delete(newParent.Children, newBase)
+		for _, id := range ids {
+			p := filepath.Join(baseDir, filesDirName, string(id))
+			if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
+				log.Warn().
+					Str("resolved_path", p).
+					Err(err).
+					Msg("Failed to remove physical file during rename overwrite")
+			}
+		}
+	}
+
+	// 从旧父目录移除并插入到新父目录
+	delete(oldParent.Children, oldBase)
+	node.Name = newBase
+	now := time.Now()
+	node.ModTime = now
+	newParent.Children[newBase] = node
+	oldParent.ModTime = now
+	newParent.ModTime = now
+
+	return SaveIndex(index, baseDir, key)
 }

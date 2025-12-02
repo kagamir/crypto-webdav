@@ -1,16 +1,17 @@
 package frontend
 
 import (
-	"crypto-webdav/crypto"
+	"context"
 	"embed"
 	"fmt"
-	"golang.org/x/net/webdav"
 	"html/template"
 	"io"
 	"net/url"
+	"os"
 	"strconv"
 
 	"github.com/rs/zerolog/log"
+	"golang.org/x/net/webdav"
 )
 
 //go:embed templates
@@ -77,22 +78,37 @@ func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 		return err
 	}
 
-	// 解析目录路径获取实际路径
-	fileCrypto, ok := b.FS.(crypto.FileCrypto)
-	if !ok {
-		return fmt.Errorf("FileSystem is not FileCrypto")
+	// 直接通过 WebDAV FileSystem 打开逻辑目录，并通过 Readdir 获取内容，
+	// 由 FileCrypto 的新逻辑索引层来决定返回哪些子项。
+	// 需要在 context 中带上加密密钥，否则 FileCrypto 会返回 permission denied。
+	ctx := context.WithValue(context.Background(), "crypto.Key", b.Key)
+	dirPath := b.Name
+	if dirPath == "" {
+		dirPath = "/"
 	}
 
-	// 解析路径
-	resolvedPath, err := crypto.ResolvePath(b.Name, string(fileCrypto.Dir), b.Key)
+	f, err := b.FS.OpenFile(ctx, dirPath, os.O_RDONLY, 0)
 	if err != nil {
+		log.Error().
+			Str("path", dirPath).
+			Err(err).
+			Msg("Failed to open directory for browsing")
 		return err
 	}
+	defer f.Close()
 
-	// 使用 ListDirectory 获取目录内容
-	fileInfos, err := crypto.ListDirectory(resolvedPath, b.Key)
+	fileInfos, err := f.Readdir(-1)
 	if err != nil {
-		return err
+		// 对于空目录，Readdir 可能返回 io.EOF，这里视为“无子项”的正常情况
+		if err == io.EOF {
+			fileInfos = nil
+		} else {
+			log.Error().
+				Str("path", dirPath).
+				Err(err).
+				Msg("Failed to read directory for browsing")
+			return err
+		}
 	}
 
 	var items []TemplateItem

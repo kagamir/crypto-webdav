@@ -1,87 +1,113 @@
-# Crypto WebDAV
+## Crypto WebDAV
 
-一个支持端到端加密的 WebDAV 服务器，使用 AES-CTR 模式实现文件内容和元信息的全面加密，支持流式解密以应对大文件（如视频）的在线预览需求。
+A WebDAV server with **server-side encryption**.  
+File contents are encrypted with AES in CTR mode, supporting streaming encryption/decryption and random access for large files (such as videos).  
+Logical file and directory metadata are stored in a per‑user encrypted index file.  
 
-## 安全特性
+### Security Features
 
-### 密码学实现
+#### 1. Key derivation
+- **Method**: SHA‑256
+- **Input**: `SHA256(username + password)`
+- **Output**: 32‑byte encryption key
+- **Usage**: Each user has an independent symmetric key derived from their own username and password
 
-#### 1. 密钥派生
-- **方法**: SHA-256 哈希
-- **输入**: `SHA256(username + password)`
-- **输出**: 32 字节加密密钥
-- **用途**: 每个用户拥有独立的加密密钥，基于用户名和密码派生
+> Note: There is also an `Argon2` helper in code, but the current login flow uses SHA‑256 as shown above.
 
-#### 2. 文件内容加密
-- **算法**: AES-256-CTR (Counter Mode)
-- **密钥长度**: 256 位 (32 字节)
-- **Nonce 生成**: 每个文件使用 `crypto/rand` 生成 16 字节随机 nonce
-- **Nonce 存储**: 文件头部前 16 字节
-- **IV 计算**: `IV = nonce + (position / 16)`，支持任意位置的分块解密
-- **流式特性**: CTR 模式天然支持流式加密/解密，无需填充，可随机访问任意位置
+#### 2. File content encryption
+- **Algorithm**: AES‑256‑CTR (Counter Mode)
+- **Key length**: 256 bits (32 bytes)
+- **Nonce generation**: For each physical file, a 16‑byte random nonce is generated with `crypto/rand`
+- **Nonce storage**: The first 16 bytes at the beginning of the physical file
+- **IV calculation**: `IV = nonce + (position / 16)` (big‑integer addition)
+- **Streaming property**: CTR mode naturally supports streaming encryption/decryption without padding and allows random access to any position
 
-**技术细节**:
+Technical detail (simplified from `crypto/file.go`):
+
 ```go
-// IV 计算确保每个 16 字节块使用不同的计数器
-offset := position / BlockSize
-IV = nonce + offset  // 大整数加法
+// Each 16‑byte block uses a different counter value
+offset := position / BlockSize   // BlockSize == 16
+iv := nonce + offset             // big.Int addition
+stream := cipher.NewCTR(block, iv)
 ```
 
-#### 3. 文件名和目录名加密
-- **存储方式**: 文件/目录在文件系统中以哈希值命名
-- **文件命名**: `SHA256(文件内容)` - 基于文件内容的哈希值
-- **目录命名**: `SHA256(目录名)` - 基于原始目录名的哈希值
-- **哈希算法**: SHA-256
-- **优势**: 相同内容文件自动去重，无法从文件名推断内容
+#### 3. Logical file and directory names
+- **Logical names** (user‑visible path segments in WebDAV) are stored only inside the encrypted index file.
+- **Physical storage**: Encrypted file data is stored under a per‑user `files/` directory using random IDs, not hashes of content or names.
+- **Node ID**: For each file node, a random 128‑bit ID is generated (16 random bytes encoded as lower‑case hex) and used as the physical filename.
+- **Privacy**: From the on‑disk layout it is not possible to infer original file or directory names.
 
-#### 4. 元信息加密
-- **存储位置**: 每个文件/目录对应一个 `.meta` 加密文件
-- **元信息内容**:
-  - 原始文件名/目录名
-  - 文件原始大小（目录为 0）
-  - 修改时间
-  - 类型标识（文件/目录）
-- **加密方式**: AES-256-CTR
-- **Nonce**: 每个元信息文件独立生成 16 字节随机 nonce
-- **格式**: `nonce(16字节) + encrypted_json_data`
+#### 4. Metadata and index encryption
 
-**元信息结构**:
+Instead of per‑file `.meta` sidecar files, the current implementation uses a **single encrypted index file per user** that contains the entire logical tree.
+
+- **Index file name**: `index.meta.enc`
+- **Location**: In each user’s root directory under `upload/{username}`
+- **Content**: JSON document describing the full logical directory tree
+- **Encryption algorithm**: AES‑256‑CTR
+- **Nonce**: 16‑byte random nonce generated for the index file
+- **On‑disk format**: `nonce (16 bytes) + encrypted_json_data`
+
+JSON structures (simplified from `crypto/index.go`):
+
 ```json
 {
-  "name": "原始文件名",
-  "size": 文件大小,
-  "modTime": "2024-01-01T00:00:00Z",
-  "isDir": false
+  "version": 1,
+  "root": {
+    "id": "optional-file-id-or-empty-for-dir",
+    "name": "",
+    "size": 0,
+    "modTime": "2024-01-01T00:00:00Z",
+    "isDir": true,
+    "children": {
+      "file-or-dir-name": {
+        "id": "hex-node-id-for-files",
+        "name": "file-or-dir-name",
+        "size": 1234,
+        "modTime": "2024-01-01T00:00:00Z",
+        "isDir": false,
+        "children": null
+      }
+    }
+  }
 }
 ```
 
-### 存储结构
+Each logical node corresponds either to:
+- a **directory** (`isDir == true`), with `children` populated; or  
+- a **file** (`isDir == false`), with `id` set to the random physical NodeID and `size` / `modTime` describing the logical file.
 
-```
+### On‑disk storage layout
+
+Per‑user storage is organized as follows:
+
+```text
 upload/
 └── {username}/
-    ├── {hash1}/              # 目录（哈希名）
-    │   ├── {hash1}.meta      # 目录元信息（加密）
-    │   └── {hash2}            # 文件（哈希名）
-    │       └── {hash2}.meta   # 文件元信息（加密）
-    └── {hash3}                # 根目录下的文件
-        └── {hash3}.meta
+    ├── index.meta.enc        # Encrypted logical index (JSON + AES‑CTR)
+    └── files/                # Physical encrypted file blobs
+        ├── {nodeID1}         # Random hex NodeID, contains nonce + ciphertext
+        └── {nodeID2}
 ```
 
-### 安全保证
+The WebDAV layer (`FileCrypto`) exposes a logical tree based on `index.meta.enc`, while physical files under `files/` hold only encrypted content plus a per‑file nonce.
 
-1. **服务端加密**: 所有文件内容和元信息在服务器端加密存储
-2. **密钥隔离**: 每个用户拥有独立的加密密钥，无法访问其他用户数据
-3. **无明文存储**: 文件名、目录名、文件内容均以加密形式存储
-4. **流式解密**: 支持大文件的随机访问和流式传输，无需完整解密
-5. **前向安全**: 即使密钥泄露，已加密数据仍受保护（需要 nonce）
+### Security guarantees
 
-## 使用方法
+1. **Server‑side encryption**: All file contents and logical metadata are stored encrypted on disk.
+2. **Key isolation**: Each user has an independent symmetric key; users cannot decrypt or list each other’s data.
+3. **No plaintext names**: Logical file and directory names exist only inside the encrypted index, not in the raw filesystem layout.
+4. **Streaming decryption**: Large files can be accessed via HTTP Range requests and streamed without full decryption.
+5. **Nonce‑bound security**: Even if a key leaks, decryption of data still requires the corresponding nonce stored with each file / index.
 
-### 环境变量
+## Usage
 
-- `WEBDAV_ADDRESS`: WebDAV 服务器监听地址（默认: `0.0.0.0:4043`）
-- `WEBDAV_HTPASSWD_FILE`: htpasswd 文件路径（默认: `./htpasswd`）
+### Environment variables
+
+- `WEBDAV_ADDRESS`: WebDAV listen address (default: `0.0.0.0:4043`)
+- `WEBDAV_HTPASSWD_FILE`: path to the `htpasswd` file (default: `./htpasswd`)
+- `LOG_LEVEL`: log level for `zerolog` (e.g. `debug`, `info`, `warn`, `error`)
+- `ENV`: when set to `development`, logs are printed in colored, human‑friendly format
 
 ### Linux
 
@@ -99,15 +125,15 @@ $env:WEBDAV_HTPASSWD_FILE="C:\path\to\htpasswd"
 .\crypto-webdav.exe
 ```
 
-## Docker 部署
+## Docker deployment
 
-### 构建镜像
+### Build image
 
 ```bash
 docker build -t crypto-webdav .
 ```
 
-### 运行容器
+### Run container
 
 ```bash
 docker run --restart always \
@@ -120,61 +146,63 @@ docker run --restart always \
   -d crypto-webdav
 ```
 
-### 参数说明
+### Parameter explanation
 
-- `-v /path/to/storage:/upload`: 挂载存储目录（持久化数据）
-- `-v /path/to/htpasswd:/htpasswd`: 挂载 htpasswd 认证文件
-- `-p 8080:8080`: 映射端口
-- `--restart always`: 自动重启
+- `-v /path/to/storage:/upload`: mount persistent storage for encrypted data
+- `-v /path/to/htpasswd:/htpasswd`: mount `htpasswd` file for authentication
+- `-p 8080:8080`: map container port to host
+- `--restart always`: automatically restart container
 
-### 创建 htpasswd 文件
+### Creating an `htpasswd` file
 
 ```bash
-# 使用 htpasswd 工具创建用户
+# Using the 'htpasswd' tool
 htpasswd -c /path/to/htpasswd username
 
-# 或使用 openssl
+# Or using OpenSSL
 echo "username:$(openssl passwd -apr1 password)" >> /path/to/htpasswd
 ```
 
-## 安全建议
+## Security recommendations
 
-1. **使用 HTTPS**: 建议通过反向代理（如 Nginx、Caddy）启用 HTTPS
-2. **强密码策略**: 确保用户使用强密码，密钥强度直接影响加密安全性
-3. **定期备份**: 备份加密数据文件和 htpasswd 文件
-4. **访问控制**: 使用防火墙限制 WebDAV 端口的访问
-5. **密钥管理**: 妥善保管 htpasswd 文件，泄露会导致数据可被解密
+1. **Use HTTPS**: It is strongly recommended to terminate TLS via a reverse proxy (Nginx, Caddy, etc.).
+2. **Strong passwords**: User password strength directly affects derived key strength.
+3. **Regular backups**: Back up encrypted data under `upload/` and the `htpasswd` file.
+4. **Access control**: Restrict access to the WebDAV port using a firewall or reverse proxy ACLs.
+5. **Credential protection**: Keep the `htpasswd` file secret; if it leaks, attackers can authenticate and derive user keys.
 
-## 技术架构
+## Technical architecture
 
-- **WebDAV 协议**: 基于 `golang.org/x/net/webdav`
-- **HTTP 服务器**: 原生 `net/http` (完全兼容 WebDAV 标准方法)
-- **认证方式**: HTTP Basic Authentication
-- **加密算法**: AES-256-CTR
-- **哈希算法**: SHA-256
+- **WebDAV protocol**: based on `golang.org/x/net/webdav`
+- **HTTP server**: Go’s standard `net/http` (fully compatible with WebDAV methods)
+- **Authentication**: HTTP Basic Authentication with `htpasswd` verification
+- **Encryption**: AES‑256‑CTR for both file content and the index
+- **Hashing**: SHA‑256 for key derivation (current login flow)
+- **Indexing**: Custom logical index (`index.meta.enc`) describing the entire tree, loaded and saved per user
 
-## 性能特性
+## Performance characteristics
 
-- **流式处理**: 支持大文件的流式上传/下载
-- **随机访问**: 支持视频文件的 Range 请求和在线预览
-- **零拷贝**: 使用 CTR 模式的 XOR 操作，性能开销低
-- **内存效率**: 分块处理，无需将整个文件加载到内存
+- **Streaming I/O**: Supports streaming upload/download of large files.
+- **Random access**: Works with HTTP Range requests, suitable for video seeking and online preview.
+- **Low overhead per block**: CTR mode uses XOR operations on blocks, with minimal CPU overhead.
+- **Memory efficiency**: File contents are processed in chunks; no need to load whole files into RAM.
+- **Index‑based listing**: Directory listings and metadata are served from the in‑memory index tree without scanning the `files/` directory.
 
-## 限制
+## Limitations
 
-- 文件内容哈希计算需要完整读取文件，大文件创建时会有额外开销
-- 目录遍历需要读取所有 `.meta` 文件，目录项过多时可能影响性能
-- 不支持文件内容的增量更新（修改文件会重新计算哈希）
+- The per‑user index (`index.meta.enc`) contains the full logical tree; very large trees may increase index size and update cost.
+- File contents cannot be updated incrementally at the encryption layer; rewriting a file rewrites its encrypted content.
+- There is no built‑in content‑hash deduplication; each logical file corresponds to its own encrypted blob.
 
-## 开发
+## Development
 
 ```bash
-# 构建
+# Build
 go build .
 
-# 运行测试
+# Run tests
 go test ./...
 
-# 运行
+# Run
 go run main.go
 ```

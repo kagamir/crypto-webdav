@@ -2,179 +2,512 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Dir Browser</title>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebDAV File Browser</title>
     <style>
-        #files_table {
-            font-family: Arial, Helvetica, sans-serif;
-            border-collapse: collapse;
-            width: 100%;
+        * {
+            box-sizing: border-box;
         }
-
-        #files_table td, #files_table th {
-            border: 1px solid #ddd;
-            padding: 1em;
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
         }
-
-        #files_table tr:nth-child(even) {
-            background-color: #f2f2f2;
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            padding: 20px;
         }
-
-        #files_table tr:hover {
-            background-color: #ddd;
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
         }
-
-        #files_table tr td:nth-child(1) span:hover {
-            text-decoration: underline;
-            cursor: pointer
+        
+        .header h1 {
+            margin: 0;
+            color: #333;
         }
-
-        #files_table th {
-            padding-top: 1em;
-            padding-bottom: 1em;
-            text-align: left;
+        
+        .user-info {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        button:hover:not(:disabled) {
+            opacity: 0.9;
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
             background-color: #4CAF50;
             color: white;
+        }
+        
+        .btn-danger {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background-color: #2196F3;
+            color: white;
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .upload-progress {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e3f2fd;
+            border-radius: 4px;
+        }
+        
+        .upload-progress.active {
+            display: block;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .progress-text {
+            margin-top: 5px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        #files_table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        
+        #files_table th {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        #files_table td {
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        #files_table tr:hover {
+            background-color: #f9f9f9;
+        }
+        
+        .file-link {
+            color: #2196F3;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        
+        .file-link:hover {
+            text-decoration: underline;
+        }
+        
+        .file-link.dir {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+        
+        .breadcrumb {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .breadcrumb a {
+            color: #2196F3;
+            text-decoration: none;
+        }
+        
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+        
+        .message {
+            padding: 12px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        
+        .message.show {
+            display: block;
+        }
+        
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
-<h1 style="margin-bottom: 0;">WebDAV</h1>
-<div style="float: right;">
-    <p>User: {{.UserName}}</p>
-</div>
-<div style="margin-top: 2em; margin-bottom: 1em; ">
-    <input type="file" id="fileInput" style="display:none;">
-    <button style="height: 3em; width: 6em" onclick="chooseFile()">Upload</button>
-    <button style="margin-left:1em; height: 3em; width: 6em" onclick="makeDir()">New Dir</button>
-</div>
-<table id="files_table">
-    <tr>
-        <th>Name</th>
-        <th>Type</th>
-        <th>Size</th>
-        <th>Mode</th>
-        <th>Last modified</th>
-        <th>Action</th>
-    </tr>
-    <tr>
-        <td><span onclick="window.location.href='..'">..</span></td>
-        <td>Dir</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-        <td>-</td>
-    </tr>
-    {{range .Items}}
-    <tr>
-        <td><span onclick="window.location.href='{{.Path}}/'">{{.Name}}</span></td>
-        <td>{{.IsDir}}</td>
-        <td>{{.Size}}</td>
-        <td>{{.Mode}}</td>
-        <td>{{.ModTime}}</td>
-        <td>
-            <button onclick="deleteFile('{{.Name}}','{{.IsDir}}')">Delete</button>
-        </td>
-    </tr>
-    {{else}}
-    <tr>
-        <td colspan=6>No items found.</td>
-    </tr>
-    {{end}}
-</table>
-<script>
-    function pathJoin(a, b) {
-        if (a === "/") {
-            return a + b
-        } else {
-            return a + "/" + b
+    <div class="container">
+        <div class="header">
+            <h1>WebDAV File Browser</h1>
+            <div class="user-info">User: {{.UserName}}</div>
+        </div>
+        
+        <div id="message" class="message"></div>
+        
+        <div class="breadcrumb" id="breadcrumb">
+            <a href="/">Home</a>
+        </div>
+        
+        <div class="toolbar">
+            <input type="file" id="fileInput" multiple>
+            <button class="btn-primary" onclick="chooseFile()">📤 Upload File</button>
+            <button class="btn-secondary" onclick="makeDir()">📁 New Folder</button>
+            <button class="btn-secondary" onclick="refreshPage()">🔄 Refresh</button>
+        </div>
+        
+        <div class="upload-progress" id="uploadProgress">
+            <div><strong>Uploading...</strong></div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">0%</div>
+        </div>
+        
+        <table id="files_table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Type</th>
+                    <th>Size</th>
+                    <th>Last Modified</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>
+                        <a href="javascript:void(0)" onclick="navigateTo('..')" class="file-link dir">..</a>
+                    </td>
+                    <td>Dir</td>
+                    <td>-</td>
+                    <td>-</td>
+                    <td>-</td>
+                </tr>
+                {{range .Items}}
+                <tr>
+                    <td>
+                        {{if eq .IsDir "Dir"}}
+                            <a href="javascript:void(0)" onclick="navigateTo('{{.Path}}')" class="file-link dir">{{.Name}}</a>
+                        {{else}}
+                            <a href="{{.Path}}" class="file-link">{{.Name}}</a>
+                        {{end}}
+                    </td>
+                    <td>{{.IsDir}}</td>
+                    <td>{{.Size}}</td>
+                    <td>{{.ModTime}}</td>
+                    <td>
+                        <button class="btn-danger btn-small" onclick="deleteFile('{{.Name}}','{{.IsDir}}','{{.Path}}')">Delete</button>
+                    </td>
+                </tr>
+                {{else}}
+                <tr>
+                    <td colspan="5" style="text-align: center; color: #999; padding: 40px;">
+                        No files or folders found
+                    </td>
+                </tr>
+                {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // 获取当前路径
+        function getCurrentPath() {
+            let path = window.location.pathname;
+            // 如果是根目录，返回 /
+            if (path === '' || path === '/') {
+                return '/';
+            }
+            // 如果是目录，确保以 / 结尾
+            if (path.endsWith('/') && path !== '/') {
+                path = path.slice(0, -1);
+            }
+            return path;
         }
-    }
-</script>
-<script>
-    function chooseFile() {
-        document.getElementById('fileInput').click();
-    }
-
-    document.getElementById('fileInput').addEventListener('change', function () {
-        let file = this.files[0];
-
-        if (file) {
-            let fileName = file.name;
-            let reader = new FileReader();
-            reader.onload = function (event) {
-                let fileContent = event.target.result;
-                uploadFile(fileName, fileContent);
-            };
-            reader.readAsArrayBuffer(file)
+        
+        // 路径拼接工具函数
+        function pathJoin(a, b) {
+            a = a || '';
+            b = b || '';
+            if (a === '/' || a === '') {
+                return '/' + b;
+            }
+            if (!a.endsWith('/')) {
+                a += '/';
+            }
+            if (b.startsWith('/')) {
+                b = b.slice(1);
+            }
+            return a + b;
         }
-    });
-
-    function uploadFile(fileName, fileContent) {
-        fetch(pathJoin(window.location.pathname, fileName), {
-            method: 'PUT',
-            body: fileContent
-        })
-            .then(response => {
-                if (response.ok) {
-                    location.reload();
+        
+        // 显示消息
+        function showMessage(text, type) {
+            const msgEl = document.getElementById('message');
+            msgEl.textContent = text;
+            msgEl.className = 'message show ' + (type || 'success');
+            setTimeout(() => {
+                msgEl.classList.remove('show');
+            }, 3000);
+        }
+        
+        // 更新面包屑导航
+        function updateBreadcrumb() {
+            const path = getCurrentPath();
+            const parts = path.split('/').filter(p => p);
+            const breadcrumb = document.getElementById('breadcrumb');
+            let html = '<a href="/">Home</a>';
+            
+            let currentPath = '';
+            for (let i = 0; i < parts.length; i++) {
+                currentPath += '/' + parts[i];
+                html += ' / <a href="' + currentPath + '">' + parts[i] + '</a>';
+            }
+            
+            breadcrumb.innerHTML = html;
+        }
+        
+        // 导航到指定路径
+        function navigateTo(path) {
+            if (path === '..') {
+                const current = getCurrentPath();
+                const parts = current.split('/').filter(p => p);
+                if (parts.length > 0) {
+                    parts.pop();
+                    window.location.href = '/' + (parts.length > 0 ? parts.join('/') + '/' : '');
                 } else {
-                    alert("Error: " + response.status)
+                    window.location.href = '/';
+                }
+            } else {
+                window.location.href = path + (path.endsWith('/') ? '' : '/');
+            }
+        }
+        
+        // 刷新页面
+        function refreshPage() {
+            window.location.reload();
+        }
+        
+        // 选择文件
+        function chooseFile() {
+            document.getElementById('fileInput').click();
+        }
+        
+        // 文件选择处理
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const files = e.target.files;
+            if (files.length === 0) return;
+            
+            // 支持多文件上传
+            for (let i = 0; i < files.length; i++) {
+                uploadFile(files[i]);
+            }
+            
+            // 重置文件输入
+            this.value = '';
+        });
+        
+        // 上传文件
+        function uploadFile(file) {
+            const currentPath = getCurrentPath();
+            const filePath = pathJoin(currentPath, file.name);
+            
+            // 显示进度条
+            const progressEl = document.getElementById('uploadProgress');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            progressEl.classList.add('active');
+            progressFill.style.width = '0%';
+            progressText.textContent = 'Uploading ' + file.name + '... 0%';
+            
+            // 创建 XMLHttpRequest 以支持进度
+            const xhr = new XMLHttpRequest();
+            
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    progressFill.style.width = percent + '%';
+                    progressText.textContent = 'Uploading ' + file.name + '... ' + percent + '%';
+                }
+            });
+            
+            xhr.addEventListener('load', function() {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    showMessage('File "' + file.name + '" uploaded successfully', 'success');
+                    setTimeout(() => {
+                        progressEl.classList.remove('active');
+                        window.location.reload();
+                    }, 500);
+                } else {
+                    showMessage('Failed to upload file: ' + xhr.statusText, 'error');
+                    progressEl.classList.remove('active');
+                }
+            });
+            
+            xhr.addEventListener('error', function() {
+                showMessage('Error uploading file: Network error', 'error');
+                progressEl.classList.remove('active');
+            });
+            
+            xhr.open('PUT', filePath);
+            xhr.send(file);
+        }
+        
+        // 创建目录
+        function makeDir() {
+            const dirName = prompt('Enter folder name:', 'new_folder');
+            if (!dirName || dirName.trim() === '') {
+                return;
+            }
+            
+            // 清理目录名
+            const cleanName = dirName.trim().replace(/[\/\\]/g, '_');
+            if (cleanName === '') {
+                showMessage('Invalid folder name', 'error');
+                return;
+            }
+            
+            const currentPath = getCurrentPath();
+            const dirPath = pathJoin(currentPath, cleanName);
+            
+            // 使用标准的 WebDAV MKCOL 方法
+            fetch(dirPath, {
+                method: 'MKCOL'
+            })
+            .then(response => {
+                if (response.ok || response.status === 201) {
+                    showMessage('Folder "' + cleanName + '" created successfully', 'success');
+                    setTimeout(() => window.location.reload(), 500);
+                } else {
+                    return response.text().then(text => {
+                        throw new Error('HTTP ' + response.status + ': ' + text);
+                    });
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert("Error: " + error)
+                showMessage('Failed to create folder: ' + error.message, 'error');
             });
-    }
-</script>
-<script>
-    function deleteFile(fileName, fileType) {
-        let ok = window.confirm("Are you sure you want to DELETE " + fileType + " " + fileName + " ?")
-        if (!ok) {
-            return
         }
-
-        fetch(pathJoin(window.location.pathname, fileName), {
-            method: 'DELETE'
-        })
+        
+        // 删除文件或目录
+        function deleteFile(fileName, fileType, filePath) {
+            const confirmMsg = 'Are you sure you want to delete ' + fileType.toLowerCase() + ' "' + fileName + '"?\n\nThis action cannot be undone!';
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+            
+            fetch(filePath, {
+                method: 'DELETE'
+            })
             .then(response => {
-                if (response.ok) {
-                    location.reload();
+                if (response.ok || response.status === 204) {
+                    showMessage(fileType + ' "' + fileName + '" deleted successfully', 'success');
+                    setTimeout(() => window.location.reload(), 500);
                 } else {
-                    alert("Error: " + response.status)
+                    return response.text().then(text => {
+                        throw new Error('HTTP ' + response.status + ': ' + text);
+                    });
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert("Error: " + error)
+                showMessage('Failed to delete ' + fileType.toLowerCase() + ': ' + error.message, 'error');
             });
-    }
-
-</script>
-<script>
-    function makeDir() {
-        let dirName = prompt("Dir name：", "new_dir");
-        if (dirName == null || dirName === "") {
-            return
         }
-        console.log(window.location.pathname)
-        fetch(pathJoin(window.location.pathname, dirName), {
-            method: 'MKCOL'
-        })
-            .then(response => {
-                if (response.ok) {
-                    location.reload();
-                } else {
-                    alert("Error: " + response.status)
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert("Error: " + error)
-            });
-
-    }
-</script>
+        
+        // 页面加载时更新面包屑
+        window.addEventListener('DOMContentLoaded', function() {
+            updateBreadcrumb();
+        });
+    </script>
 </body>
 </html>

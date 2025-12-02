@@ -7,10 +7,10 @@ import (
 	"golang.org/x/net/webdav"
 	"html/template"
 	"io"
-	"log"
 	"net/url"
-	"os"
 	"strconv"
+
+	"github.com/rs/zerolog/log"
 )
 
 //go:embed templates
@@ -65,62 +65,77 @@ type BrowserDir struct {
 	FS       webdav.FileSystem
 	Name     string
 	UserName string
+	Key      []byte // 加密密钥
 }
 
 func (b *BrowserDir) MakeHTML(w io.Writer) (err error) {
 	tmpl, err := template.ParseFS(embeddedFiles, "templates/browser.html")
 	if err != nil {
-		log.Println(err)
+		log.Error().
+			Err(err).
+			Msg("Failed to parse template")
+		return err
 	}
 
-	dir, err := b.FS.OpenFile(nil, b.Name, os.O_RDONLY, os.ModeDir)
-	if err != nil {
-		return
+	// 解析目录路径获取实际路径
+	fileCrypto, ok := b.FS.(crypto.FileCrypto)
+	if !ok {
+		return fmt.Errorf("FileSystem is not FileCrypto")
 	}
-	defer dir.Close()
 
-	fileInfos, err := dir.Readdir(0)
+	// 解析路径
+	resolvedPath, err := crypto.ResolvePath(b.Name, string(fileCrypto.Dir), b.Key)
 	if err != nil {
-		return
+		return err
+	}
+
+	// 使用 ListDirectory 获取目录内容
+	fileInfos, err := crypto.ListDirectory(resolvedPath, b.Key)
+	if err != nil {
+		return err
 	}
 
 	var items []TemplateItem
 	for _, fileInfo := range fileInfos {
-		fileStat := crypto.EncryptedFileInfo{FileInfo: fileInfo}
+		// fileInfo 已经是 MetadataFileInfo，包含原始名称
 		var isDir string
 		var mode string
 		var size string
-		name := fileStat.Name()
-		if fileStat.IsDir() {
+		name := fileInfo.Name()
+		if fileInfo.IsDir() {
 			isDir = "Dir"
 			mode = "-"
 			size = "-"
 			name += "/"
 		} else {
 			isDir = "File"
-			mode = strconv.FormatUint(uint64(fileStat.Mode()), 10)
-			size = formatBytes(fileStat.Size())
+			mode = strconv.FormatUint(uint64(fileInfo.Mode()), 10)
+			size = formatBytes(fileInfo.Size())
 		}
 
-		path, innerErr := url.JoinPath(b.Name, fileStat.Name())
+		path, innerErr := url.JoinPath(b.Name, name)
 		if innerErr != nil {
-			log.Println(innerErr)
-			return
+			log.Warn().
+				Str("base_path", b.Name).
+				Str("name", name).
+				Err(innerErr).
+				Msg("Failed to join URL path")
+			continue
 		}
 		items = append(items, TemplateItem{
 			Name:    name,
 			Path:    path,
 			Size:    size,
 			Mode:    mode,
-			ModTime: fileStat.ModTime().Format("2006-01-02 15:04:05"),
+			ModTime: fileInfo.ModTime().Format("2006-01-02 15:04:05"),
 			IsDir:   isDir,
 		})
 	}
 	data := TemplateData{UserName: b.UserName, Items: items}
 	err = tmpl.Execute(w, data)
 	if err != nil {
-		return
+		return err
 	}
 
-	return
+	return nil
 }

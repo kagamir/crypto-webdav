@@ -6,16 +6,19 @@ import (
 	"crypto/rand"
 	"io"
 	"io/fs"
-	"log"
 	"math/big"
 	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const BlockSize = 16
 
 func handleError(err error) {
 	if err != nil {
-		log.Panicf("%s: %v\n", "[FILE]", err)
+		log.Panic().Err(err).Msg("File operation error")
 	}
 }
 
@@ -84,9 +87,19 @@ type EncryptedFile struct {
 	filePointer *os.File
 	aes         *AesCtr
 	ptrPos      int64
+	// 新文件相关字段
+	originalName string // 原始文件名
+	parentDir    string // 父目录路径
+	isNewFile    bool   // 是否为新文件
+	actualPath   string // 实际文件路径
+	key          []byte // 加密密钥
+	fileSize     int64  // 文件大小（用于元信息）
 }
 
 func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte) (err error) {
+	e.actualPath = name
+	e.key = key
+
 	fp, err := os.OpenFile(name, flag, perm)
 	if err != nil {
 		return
@@ -100,7 +113,7 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 		fileLen := fileInfo.Size()
 		nonce := make([]byte, BlockSize)
 		if fileLen == 0 {
-			log.Println("[Open] New", name)
+			log.Debug().Str("file", name).Msg("Opening new file")
 			_, err = rand.Read(nonce)
 			if handleError(err); err != nil {
 				return err
@@ -109,6 +122,7 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 			if handleError(err); err != nil {
 				return err
 			}
+			e.isNewFile = true
 
 		} else {
 			_, err = fp.ReadAt(nonce, 0)
@@ -127,6 +141,7 @@ func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte
 }
 
 func (e *EncryptedFile) Write(b []byte) (n int, err error) {
+	plaintextLen := len(b)
 	b, err = e.aes.Encrypt(b, e.ptrPos)
 	if handleError(err); err != nil {
 		return
@@ -136,14 +151,18 @@ func (e *EncryptedFile) Write(b []byte) (n int, err error) {
 		return
 	}
 	e.ptrPos += int64(n)
-	return
+	e.fileSize += int64(plaintextLen) // 记录原始文件大小
+	return plaintextLen, nil // 返回原始数据长度
 }
 
 func (e *EncryptedFile) Read(b []byte) (n int, err error) {
 	buffer := make([]byte, len(b))
 	n, err = e.filePointer.Read(buffer)
 	if err != nil {
-		log.Println("[Read Error]", err)
+		log.Error().
+			Str("file", e.actualPath).
+			Err(err).
+			Msg("Error reading file")
 		return
 	}
 	buffer, err = e.aes.Decrypt(buffer, e.ptrPos)
@@ -169,11 +188,70 @@ func (e *EncryptedFile) Seek(offset int64, whence int) (ret int64, err error) {
 }
 
 func (e *EncryptedFile) Close() (err error) {
+	// 关闭文件指针
 	err = e.filePointer.Close()
-	return
+	if err != nil {
+		return err
+	}
+
+	// 如果是新文件，需要计算哈希并重命名，创建元信息
+	if e.isNewFile && e.originalName != "" {
+		return e.finalizeNewFile()
+	}
+
+	return nil
+}
+
+// finalizeNewFile 完成新文件的创建：计算哈希、重命名、创建元信息
+func (e *EncryptedFile) finalizeNewFile() error {
+	// 计算文件内容哈希
+	hash, err := CalculateFileContentHash(e.actualPath, e.key)
+	if err != nil {
+		return err
+	}
+
+	// 构建新的文件路径
+	newPath := filepath.Join(e.parentDir, hash)
+
+	// 如果临时文件名已经是正确的哈希，不需要重命名
+	if filepath.Base(e.actualPath) != hash {
+		// 重命名文件
+		if err := os.Rename(e.actualPath, newPath); err != nil {
+			return err
+		}
+		e.actualPath = newPath
+	}
+
+	// 创建元信息文件
+	metaPath := GetMetadataFilePath(newPath)
+	metadata := &Metadata{
+		Name:    e.originalName,
+		Size:    e.fileSize,
+		ModTime: time.Now(),
+		IsDir:   false,
+	}
+
+	if err := WriteMetadataFile(metaPath, metadata, e.key); err != nil {
+		// 如果元信息写入失败，尝试恢复
+		os.Remove(newPath)
+		return err
+	}
+
+	return nil
 }
 
 func (e *EncryptedFile) Readdir(n int) (infos []fs.FileInfo, err error) {
+	// 如果是目录，使用 ListDirectory 来获取解密后的文件信息
+	if e.filePointer != nil && e.key != nil {
+		fileInfo, err := e.filePointer.Stat()
+		if err == nil && fileInfo.IsDir() {
+			dirPath := e.actualPath
+			if dirPath != "" {
+				return ListDirectory(dirPath, e.key)
+			}
+		}
+	}
+	// 非目录或无法获取密钥时，使用底层实现
 	infos, err = e.filePointer.Readdir(n)
 	return
 }

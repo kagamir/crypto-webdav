@@ -1,9 +1,10 @@
 package crypto
 
 import (
-	"github.com/foomo/htpasswd"
-	"log"
 	"os"
+
+	"github.com/foomo/htpasswd"
+	"github.com/rs/zerolog/log"
 )
 
 type Htpasswd struct {
@@ -18,7 +19,10 @@ func (h *Htpasswd) Init() (err error) {
 	}
 	passwords, err := htpasswd.ParseHtpasswdFile(htpasswdPath)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().
+			Str("htpasswd_path", htpasswdPath).
+			Err(err).
+			Msg("Failed to parse htpasswd file")
 		return
 	}
 	h.passwords = passwords
@@ -40,9 +44,17 @@ func (h *Htpasswd) makeDir() {
 		dirPath := "./upload/" + user
 		err := os.MkdirAll(dirPath, 0777)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal().
+				Str("user", user).
+				Str("dir_path", dirPath).
+				Err(err).
+				Msg("Failed to create user directory")
 			return
 		}
+		log.Info().
+			Str("user", user).
+			Str("dir_path", dirPath).
+			Msg("Created user directory")
 	}
 }
 

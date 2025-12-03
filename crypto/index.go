@@ -469,7 +469,38 @@ func fmtBytesToHex(b []byte) string {
 
 // 文件节点对应的物理路径
 func fileNodePhysicalPath(baseDir string, node *FileNode) string {
-	return filepath.Join(baseDir, filesDirName, string(node.ID))
+	if node == nil || node.ID == "" {
+		return filepath.Join(baseDir, filesDirName)
+	}
+	return FilePathFromID(baseDir, node.ID)
+}
+
+// FilePathFromID 根据 NodeID 生成物理文件路径。
+// 为了降低单目录文件数量，这里按 ID 的前四位十六进制字符进行两级分桶：
+//
+//	upload/user/files/ab/cd/abcdxxxxxxxx...
+//
+// 若 ID 长度不足 4，则退化为更简单的结构：
+//   - 长度 >= 2: 使用一级分桶 upload/user/files/ab/id
+//   - 其他情况: 退化为原来的平铺目录结构 upload/user/files/id
+func FilePathFromID(baseDir string, id NodeID) string {
+	baseDir = filepath.Clean(baseDir)
+	if baseDir == "" {
+		baseDir = "."
+	}
+
+	idStr := string(id)
+	if len(idStr) >= 4 {
+		bucket1 := idStr[:2]
+		bucket2 := idStr[2:4]
+		return filepath.Join(baseDir, filesDirName, bucket1, bucket2, idStr)
+	}
+
+	if len(idStr) >= 2 {
+		bucket := idStr[:2]
+		return filepath.Join(baseDir, filesDirName, bucket, idStr)
+	}
+	return filepath.Join(baseDir, filesDirName, idStr)
 }
 
 // 目录节点的 LogicalFileInfo

@@ -196,7 +196,7 @@ echo "username:$(openssl passwd -apr1 password)" >> /path/to/htpasswd
 
 ## Futures
 
-- [ ] Hash‑based sharding and hierarchical directory layout
+- [x] Hash‑based sharding and hierarchical directory layout
 
 ## Development
 

@@ -108,10 +108,22 @@ func (c FileCrypto) Stat(ctx context.Context, name string) (os.FileInfo, error) 
 	}
 
 	// 文件：读取物理文件信息来补充大小/时间
-	physicalPath := fileNodePhysicalPath(baseDir, node)
+	// 优先使用分桶后的新路径，如不存在则回退到旧平铺路径以兼容历史数据。
+	physicalPath := FilePathFromID(baseDir, node.ID)
 	physicalInfo, err := os.Stat(physicalPath)
 	if err != nil {
-		return nil, err
+		if os.IsNotExist(err) {
+			legacyPath := filepath.Join(baseDir, filesDirName, string(node.ID))
+			if legacyInfo, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+				physicalPath = legacyPath
+				physicalInfo = legacyInfo
+			} else {
+				// 如果旧路径也不存在或出错，则返回原始错误
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
 	}
 
 	return fileNodeFileInfo(node, physicalInfo), nil
@@ -260,15 +272,31 @@ func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os
 	}
 
 	// 文件：打开物理加密文件
-	physicalPath := fileNodePhysicalPath(baseDir, node)
+	// 优先使用分桶后的新路径，如果不存在则兼容旧平铺路径。
+	physicalPath := FilePathFromID(baseDir, node.ID)
 
-	// 确保 files 目录存在
+	// 兼容旧平铺布局：若新路径不存在但旧路径存在，则使用旧路径
+	if _, err := os.Stat(physicalPath); err != nil {
+		if os.IsNotExist(err) {
+			legacyPath := filepath.Join(baseDir, filesDirName, string(node.ID))
+			if legacyInfo, legacyErr := os.Stat(legacyPath); legacyErr == nil && !legacyInfo.IsDir() {
+				physicalPath = legacyPath
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	// 确保基础目录和分桶目录存在（仅在可能创建文件时执行）
 	if err := ensureBaseLayout(baseDir); err != nil {
 		return nil, err
 	}
 
-	// 创建物理文件（若需要）
 	if flag&os.O_CREATE != 0 {
+		// 为新布局的物理文件创建桶目录
+		if err := os.MkdirAll(filepath.Dir(physicalPath), 0o755); err != nil {
+			return nil, err
+		}
 		if _, err := os.Stat(physicalPath); errors.Is(err, os.ErrNotExist) {
 			f, err := os.OpenFile(physicalPath, os.O_CREATE|os.O_WRONLY, perm)
 			if err != nil {
@@ -327,12 +355,24 @@ func (c FileCrypto) RemoveAll(ctx context.Context, name string) error {
 
 	// 删除对应的物理加密文件（在索引更新之后，避免索引和文件不一致）
 	for _, id := range ids {
-		p := filepath.Join(baseDir, filesDirName, string(id))
+		// 新分桶路径
+		p := FilePathFromID(baseDir, id)
 		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
 			log.Warn().
 				Str("resolved_path", p).
 				Err(err).
 				Msg("Failed to remove physical file")
+		}
+
+		// 兼容旧平铺路径，避免遗留历史文件
+		legacyPath := filepath.Join(baseDir, filesDirName, string(id))
+		if legacyPath != p {
+			if err := os.RemoveAll(legacyPath); err != nil && !os.IsNotExist(err) {
+				log.Warn().
+					Str("resolved_path", legacyPath).
+					Err(err).
+					Msg("Failed to remove legacy physical file")
+			}
 		}
 	}
 
@@ -408,12 +448,24 @@ func (c FileCrypto) Rename(ctx context.Context, oldName, newName string) error {
 
 	// 删除被覆盖目标的物理文件（在索引更新之后）
 	for _, id := range idsToDelete {
-		p := filepath.Join(baseDir, filesDirName, string(id))
+		// 新分桶路径
+		p := FilePathFromID(baseDir, id)
 		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
 			log.Warn().
 				Str("resolved_path", p).
 				Err(err).
 				Msg("Failed to remove physical file during rename overwrite")
+		}
+
+		// 兼容旧平铺路径
+		legacyPath := filepath.Join(baseDir, filesDirName, string(id))
+		if legacyPath != p {
+			if err := os.RemoveAll(legacyPath); err != nil && !os.IsNotExist(err) {
+				log.Warn().
+					Str("resolved_path", legacyPath).
+					Err(err).
+					Msg("Failed to remove legacy physical file during rename overwrite")
+			}
 		}
 	}
 

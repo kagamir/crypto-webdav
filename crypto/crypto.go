@@ -130,37 +130,34 @@ func (c FileCrypto) Mkdir(ctx context.Context, name string, perm os.FileMode) er
 	}
 
 	baseDir := filepath.Clean(string(c.Dir))
-	index, err := LoadIndex(baseDir, key)
-	if err != nil {
-		return err
-	}
+	// 使用 UpdateIndex 原子性地创建目录
+	return UpdateIndex(baseDir, key, func(idx *IndexRoot) (*IndexRoot, error) {
+		// 在写锁保护下查找父目录
+		parent, dirName, err := findParentAndName(idx, name)
+		if err != nil {
+			return nil, err
+		}
+		if !parent.IsDir {
+			return nil, os.ErrInvalid
+		}
 
-	// WebDAV 语义：父目录必须存在
-	parent, dirName, err := findParentAndName(index, name)
-	if err != nil {
-		return err
-	}
-	if !parent.IsDir {
-		return os.ErrInvalid
-	}
+		if parent.Children == nil {
+			parent.Children = make(map[string]*FileNode)
+		}
+		if _, exists := parent.Children[dirName]; exists {
+			return nil, os.ErrExist
+		}
 
-	if parent.Children == nil {
-		parent.Children = make(map[string]*FileNode)
-	}
-	if _, exists := parent.Children[dirName]; exists {
-		return os.ErrExist
-	}
-
-	now := time.Now()
-	parent.Children[dirName] = &FileNode{
-		Name:     dirName,
-		IsDir:    true,
-		Children: make(map[string]*FileNode),
-		ModTime:  now,
-	}
-	parent.ModTime = now
-
-	return SaveIndex(index, baseDir, key)
+		now := time.Now()
+		parent.Children[dirName] = &FileNode{
+			Name:     dirName,
+			IsDir:    true,
+			Children: make(map[string]*FileNode),
+			ModTime:  now,
+		}
+		parent.ModTime = now
+		return idx, nil
+	})
 }
 
 func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
@@ -196,39 +193,63 @@ func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os
 			return nil, err
 		}
 
-		// 创建新文件节点（父目录必须存在且为目录）
-		parent, fileName, err := findParentAndName(index, name)
+		// 使用 UpdateIndex 原子性地创建新文件节点
+		var newNode *FileNode
+		err = UpdateIndex(baseDir, key, func(idx *IndexRoot) (*IndexRoot, error) {
+			// 在写锁保护下重新查找父目录（可能已被其他线程修改）
+			parent, fileName, err := findParentAndName(idx, name)
+			if err != nil {
+				return nil, err
+			}
+			if !parent.IsDir {
+				return nil, os.ErrInvalid
+			}
+			if parent.Children == nil {
+				parent.Children = make(map[string]*FileNode)
+			}
+			if existing, ok := parent.Children[fileName]; ok {
+				if existing.IsDir {
+					// 目标是目录
+					return nil, os.ErrInvalid
+				}
+				// 文件已存在，使用现有节点
+				newNode = existing
+				return idx, nil
+			}
+
+			// 创建新文件节点
+			newID, err := randomNodeID()
+			if err != nil {
+				return nil, err
+			}
+
+			now := time.Now()
+			newNode = &FileNode{
+				ID:      newID,
+				Name:    fileName,
+				IsDir:   false,
+				Size:    0,
+				ModTime: now,
+			}
+			parent.Children[fileName] = newNode
+			parent.ModTime = now
+			return idx, nil
+		})
 		if err != nil {
 			return nil, err
 		}
-		if !parent.IsDir {
+		if newNode == nil {
 			return nil, os.ErrInvalid
 		}
-		if parent.Children == nil {
-			parent.Children = make(map[string]*FileNode)
-		}
-		if existing, ok := parent.Children[fileName]; ok && existing.IsDir {
-			// 目标是目录
-			return nil, os.ErrInvalid
-		}
-
-		newID, err := randomNodeID()
+		node = newNode
+		// 重新加载索引以获取最新状态
+		index, err = LoadIndex(baseDir, key)
 		if err != nil {
 			return nil, err
 		}
-
-		now := time.Now()
-		node = &FileNode{
-			ID:      newID,
-			Name:    fileName,
-			IsDir:   false,
-			Size:    0,
-			ModTime: now,
-		}
-		parent.Children[fileName] = node
-		parent.ModTime = now
-
-		if err := SaveIndex(index, baseDir, key); err != nil {
+		// 重新查找节点以确保引用正确
+		node, err = findNodeByPath(index, name)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -286,25 +307,25 @@ func (c FileCrypto) RemoveAll(ctx context.Context, name string) error {
 	}
 
 	baseDir := filepath.Clean(string(c.Dir))
-	index, err := LoadIndex(baseDir, key)
-	if err != nil {
-		return err
-	}
 
-	// 删除索引中的节点，并收集需要删除的物理文件 ID
-	node, err := deleteNode(index, name)
-	if err != nil {
-		return err
-	}
-
+	// 收集需要删除的物理文件 ID（在删除索引节点之前）
 	var ids []NodeID
-	collectFileIDs(node, &ids)
+	err := UpdateIndex(baseDir, key, func(idx *IndexRoot) (*IndexRoot, error) {
+		// 在写锁保护下删除索引中的节点
+		node, err := deleteNode(idx, name)
+		if err != nil {
+			return nil, err
+		}
 
-	if err := SaveIndex(index, baseDir, key); err != nil {
+		// 收集需要删除的物理文件 ID
+		collectFileIDs(node, &ids)
+		return idx, nil
+	})
+	if err != nil {
 		return err
 	}
 
-	// 删除对应的物理加密文件
+	// 删除对应的物理加密文件（在索引更新之后，避免索引和文件不一致）
 	for _, id := range ids {
 		p := filepath.Join(baseDir, filesDirName, string(id))
 		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
@@ -333,60 +354,68 @@ func (c FileCrypto) Rename(ctx context.Context, oldName, newName string) error {
 	}
 
 	baseDir := filepath.Clean(string(c.Dir))
-	index, err := LoadIndex(baseDir, key)
+
+	// 收集需要删除的物理文件 ID（如果目标已存在）
+	var idsToDelete []NodeID
+
+	// 使用 UpdateIndex 原子性地重命名
+	err := UpdateIndex(baseDir, key, func(idx *IndexRoot) (*IndexRoot, error) {
+		// 在写锁保护下查找旧节点及其父目录
+		oldParent, oldBase, err := findParentAndName(idx, oldName)
+		if err != nil {
+			return nil, err
+		}
+		if oldParent.Children == nil {
+			return nil, os.ErrNotExist
+		}
+		node, ok := oldParent.Children[oldBase]
+		if !ok {
+			return nil, os.ErrNotExist
+		}
+
+		// 新父目录
+		newParent, newBase, err := findParentAndName(idx, newName)
+		if err != nil {
+			return nil, err
+		}
+		if !newParent.IsDir {
+			return nil, os.ErrInvalid
+		}
+		if newParent.Children == nil {
+			newParent.Children = make(map[string]*FileNode)
+		}
+
+		// 如果目标已存在，收集需要删除的物理文件 ID
+		if existing, ok := newParent.Children[newBase]; ok {
+			collectFileIDs(existing, &idsToDelete)
+			delete(newParent.Children, newBase)
+		}
+
+		// 从旧父目录移除并插入到新父目录
+		delete(oldParent.Children, oldBase)
+		node.Name = newBase
+		now := time.Now()
+		node.ModTime = now
+		newParent.Children[newBase] = node
+		oldParent.ModTime = now
+		newParent.ModTime = now
+
+		return idx, nil
+	})
 	if err != nil {
 		return err
 	}
 
-	// 查找旧节点及其父目录
-	oldParent, oldBase, err := findParentAndName(index, oldName)
-	if err != nil {
-		return err
-	}
-	if oldParent.Children == nil {
-		return os.ErrNotExist
-	}
-	node, ok := oldParent.Children[oldBase]
-	if !ok {
-		return os.ErrNotExist
-	}
-
-	// 新父目录
-	newParent, newBase, err := findParentAndName(index, newName)
-	if err != nil {
-		return err
-	}
-	if !newParent.IsDir {
-		return os.ErrInvalid
-	}
-	if newParent.Children == nil {
-		newParent.Children = make(map[string]*FileNode)
-	}
-
-	// 如果目标已存在，先删除（简单覆盖语义）
-	if existing, ok := newParent.Children[newBase]; ok {
-		var ids []NodeID
-		collectFileIDs(existing, &ids)
-		delete(newParent.Children, newBase)
-		for _, id := range ids {
-			p := filepath.Join(baseDir, filesDirName, string(id))
-			if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
-				log.Warn().
-					Str("resolved_path", p).
-					Err(err).
-					Msg("Failed to remove physical file during rename overwrite")
-			}
+	// 删除被覆盖目标的物理文件（在索引更新之后）
+	for _, id := range idsToDelete {
+		p := filepath.Join(baseDir, filesDirName, string(id))
+		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
+			log.Warn().
+				Str("resolved_path", p).
+				Err(err).
+				Msg("Failed to remove physical file during rename overwrite")
 		}
 	}
 
-	// 从旧父目录移除并插入到新父目录
-	delete(oldParent.Children, oldBase)
-	node.Name = newBase
-	now := time.Now()
-	node.ModTime = now
-	newParent.Children[newBase] = node
-	oldParent.ModTime = now
-	newParent.ModTime = now
-
-	return SaveIndex(index, baseDir, key)
+	return nil
 }

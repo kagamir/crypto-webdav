@@ -12,7 +12,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 // NodeID 表示物理文件 ID（加密文件名）或逻辑节点 ID
@@ -40,6 +43,23 @@ const (
 	filesDirName     = "files"
 	indexVersion     = 1
 )
+
+// indexLocks 为每个用户的索引文件提供读写锁保护
+// key: baseDir (用户目录路径), value: *sync.RWMutex
+var indexLocks sync.Map
+
+// getIndexLock 获取指定 baseDir 的读写锁
+func getIndexLock(baseDir string) *sync.RWMutex {
+	// 规范化路径以确保一致性
+	baseDir = filepath.Clean(baseDir)
+	if baseDir == "" {
+		baseDir = "."
+	}
+
+	// 使用 LoadOrStore 确保每个 baseDir 只有一个锁
+	lock, _ := indexLocks.LoadOrStore(baseDir, &sync.RWMutex{})
+	return lock.(*sync.RWMutex)
+}
 
 // LogicalFileInfo 实现 fs.FileInfo，用于逻辑节点
 type LogicalFileInfo struct {
@@ -111,10 +131,16 @@ func ensureBaseLayout(baseDir string) error {
 }
 
 // LoadIndex 读取并解密索引文件，如不存在则创建一个空根目录索引
+// 使用读锁保护，允许多个并发读取
 func LoadIndex(baseDir string, key []byte) (*IndexRoot, error) {
 	if err := ensureBaseLayout(baseDir); err != nil {
 		return nil, err
 	}
+
+	// 获取读锁，允许多个 goroutine 同时读取
+	lock := getIndexLock(baseDir)
+	lock.RLock()
+	defer lock.RUnlock()
 
 	indexPath := filepath.Join(baseDir, indexFileName)
 	data, err := os.ReadFile(indexPath)
@@ -157,14 +183,107 @@ func LoadIndex(baseDir string, key []byte) (*IndexRoot, error) {
 }
 
 // SaveIndex 原子性写回索引文件
+// 使用写锁保护，确保写入时不会有其他读取或写入操作
 func SaveIndex(idx *IndexRoot, baseDir string, key []byte) error {
 	if err := ensureBaseLayout(baseDir); err != nil {
 		return err
 	}
 
+	// 获取写锁，确保写入时不会有其他读取或写入操作
+	lock := getIndexLock(baseDir)
+	lock.Lock()
+	defer lock.Unlock()
+
 	idx.Version = indexVersion
 
 	plain, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+
+	encrypted, err := encryptIndexData(plain, key)
+	if err != nil {
+		return err
+	}
+
+	tmpPath := filepath.Join(baseDir, indexFileTmpName)
+	finalPath := filepath.Join(baseDir, indexFileName)
+
+	if err := os.WriteFile(tmpPath, encrypted, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, finalPath)
+}
+
+// UpdateIndex 原子性地读取、修改并保存索引文件
+// 这个函数确保整个"读取-修改-写入"操作在写锁保护下执行，避免丢失更新
+// updateFn 是一个函数，接收当前的索引并修改它，返回修改后的索引和错误
+func UpdateIndex(baseDir string, key []byte, updateFn func(*IndexRoot) (*IndexRoot, error)) error {
+	if err := ensureBaseLayout(baseDir); err != nil {
+		return err
+	}
+
+	// 获取写锁，确保整个操作期间不会有其他读取或写入操作
+	lock := getIndexLock(baseDir)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// 在写锁保护下读取索引
+	indexPath := filepath.Join(baseDir, indexFileName)
+	data, err := os.ReadFile(indexPath)
+	var idx *IndexRoot
+
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// 创建默认根索引
+			root := &FileNode{
+				Name:     "",
+				IsDir:    true,
+				Children: make(map[string]*FileNode),
+				ModTime:  time.Now(),
+			}
+			idx = &IndexRoot{
+				Version: indexVersion,
+				Root:    root,
+			}
+		} else {
+			return err
+		}
+	} else {
+		plain, err := decryptIndexData(data, key)
+		if err != nil {
+			return err
+		}
+
+		var indexRoot IndexRoot
+		if err := json.Unmarshal(plain, &indexRoot); err != nil {
+			return err
+		}
+
+		if indexRoot.Root == nil {
+			indexRoot.Root = &FileNode{
+				Name:     "",
+				IsDir:    true,
+				Children: make(map[string]*FileNode),
+				ModTime:  time.Now(),
+			}
+		}
+		idx = &indexRoot
+	}
+
+	// 执行用户提供的更新函数
+	updatedIdx, err := updateFn(idx)
+	if err != nil {
+		return err
+	}
+	if updatedIdx == nil {
+		updatedIdx = idx
+	}
+
+	// 保存更新后的索引
+	updatedIdx.Version = indexVersion
+
+	plain, err := json.Marshal(updatedIdx)
 	if err != nil {
 		return err
 	}
@@ -495,16 +614,51 @@ type LogicalFile struct {
 }
 
 func (f *LogicalFile) Close() error {
-	// 在关闭前先获取物理文件信息
-	if f.node != nil && f.index != nil && f.EncryptedFile != nil {
+	// 在关闭前先获取物理文件信息并更新索引
+	if f.node != nil && f.EncryptedFile != nil {
 		if info, err := os.Stat(f.EncryptedFile.actualPath); err == nil {
 			size := info.Size() - BlockSize
 			if size < 0 {
 				size = 0
 			}
-			f.node.Size = size
-			f.node.ModTime = info.ModTime()
-			_ = SaveIndex(f.index, f.baseDir, f.key)
+			modTime := info.ModTime()
+
+			// 使用 UpdateIndex 原子性地更新索引，避免丢失其他并发更新
+			// 需要根据节点的 ID 或路径来查找并更新节点
+			err := UpdateIndex(f.baseDir, f.key, func(idx *IndexRoot) (*IndexRoot, error) {
+				// 在写锁保护下重新查找节点（可能索引已被其他线程更新）
+				// 通过遍历树来查找具有相同 ID 的节点
+				var targetNode *FileNode
+				var findNode func(*FileNode)
+				findNode = func(n *FileNode) {
+					if n != nil && n.ID == f.node.ID {
+						targetNode = n
+						return
+					}
+					if n != nil && n.IsDir && n.Children != nil {
+						for _, child := range n.Children {
+							if targetNode != nil {
+								return
+							}
+							findNode(child)
+						}
+					}
+				}
+				findNode(idx.Root)
+
+				if targetNode != nil {
+					targetNode.Size = size
+					targetNode.ModTime = modTime
+				}
+				return idx, nil
+			})
+			if err != nil {
+				// 记录错误但不阻止文件关闭
+				log.Error().
+					Str("baseDir", f.baseDir).
+					Err(err).
+					Msg("Failed to update index on file close")
+			}
 		}
 	}
 

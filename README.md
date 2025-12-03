@@ -194,6 +194,10 @@ echo "username:$(openssl passwd -apr1 password)" >> /path/to/htpasswd
 - File contents cannot be updated incrementally at the encryption layer; rewriting a file rewrites its encrypted content.
 - There is no built‑in content‑hash deduplication; each logical file corresponds to its own encrypted blob.
 
+## Futures
+
+- [ ] Hash‑based sharding and hierarchical directory layout
+
 ## Development
 
 ```bash

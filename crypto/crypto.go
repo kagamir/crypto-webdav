@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -31,13 +29,6 @@ type FileCrypto struct {
 	webdav.Dir
 }
 
-func slashClean(name string) string {
-	if name == "" || name[0] != '/' {
-		name = "/" + name
-	}
-	return path.Clean(name)
-}
-
 // getKey 从 context 获取加密密钥
 func (c FileCrypto) getKey(ctx context.Context) []byte {
 	if ctx == nil {
@@ -48,36 +39,6 @@ func (c FileCrypto) getKey(ctx context.Context) []byte {
 		return nil
 	}
 	return key
-}
-
-// resolve 将原始路径解析为实际文件系统路径
-func (c FileCrypto) resolve(ctx context.Context, name string) (string, error) {
-	log.Debug().Str("path", name).Msg("Resolving path")
-
-	// 清理路径
-	if name == "" {
-		name = "/"
-	}
-
-	// 安全检查
-	if filepath.Separator != '/' && strings.ContainsRune(name, filepath.Separator) ||
-		strings.Contains(name, "\x00") {
-		return "", os.ErrNotExist
-	}
-
-	baseDir := string(c.Dir)
-	if baseDir == "" {
-		baseDir = "."
-	}
-
-	// 获取加密密钥
-	key := c.getKey(ctx)
-	if key == nil {
-		return "", os.ErrPermission
-	}
-
-	// 使用新的路径解析
-	return ResolvePath(name, baseDir, key)
 }
 
 func (c FileCrypto) Stat(ctx context.Context, name string) (os.FileInfo, error) {
@@ -115,7 +76,6 @@ func (c FileCrypto) Stat(ctx context.Context, name string) (os.FileInfo, error) 
 		if os.IsNotExist(err) {
 			legacyPath := filepath.Join(baseDir, filesDirName, string(node.ID))
 			if legacyInfo, legacyErr := os.Stat(legacyPath); legacyErr == nil {
-				physicalPath = legacyPath
 				physicalInfo = legacyInfo
 			} else {
 				// 如果旧路径也不存在或出错，则返回原始错误
@@ -253,7 +213,6 @@ func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os
 		if newNode == nil {
 			return nil, os.ErrInvalid
 		}
-		node = newNode
 		// 重新加载索引以获取最新状态
 		index, err = LoadIndex(baseDir, key)
 		if err != nil {
@@ -303,6 +262,13 @@ func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os
 				return nil, err
 			}
 			_ = f.Close()
+			// 创建文件后立即抹除时间戳
+			if err := eraseFileTimestamps(physicalPath); err != nil {
+				log.Warn().
+					Str("file", physicalPath).
+					Err(err).
+					Msg("Failed to erase file timestamps on creation")
+			}
 		}
 	}
 

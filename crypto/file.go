@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"math/big"
 	"os"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -86,12 +87,10 @@ type EncryptedFile struct {
 	aes         *AesCtr
 	ptrPos      int64
 	// 下列字段在新索引结构中不再用于重命名或写入元信息，但保留以兼容现有逻辑
-	originalName string // 原始文件名
-	parentDir    string // 父目录路径
-	isNewFile    bool   // 是否为新文件
-	actualPath   string // 实际文件路径
-	key          []byte // 加密密钥
-	fileSize     int64  // 文件大小（用于元信息）
+	isNewFile  bool   // 是否为新文件
+	actualPath string // 实际文件路径
+	key        []byte // 加密密钥
+	fileSize   int64  // 文件大小（用于元信息）
 }
 
 func (e *EncryptedFile) Open(name string, flag int, perm os.FileMode, key []byte) (err error) {
@@ -150,7 +149,7 @@ func (e *EncryptedFile) Write(b []byte) (n int, err error) {
 	}
 	e.ptrPos += int64(n)
 	e.fileSize += int64(plaintextLen) // 记录原始文件大小
-	return plaintextLen, nil // 返回原始数据长度
+	return plaintextLen, nil          // 返回原始数据长度
 }
 
 func (e *EncryptedFile) Read(b []byte) (n int, err error) {
@@ -185,11 +184,28 @@ func (e *EncryptedFile) Seek(offset int64, whence int) (ret int64, err error) {
 	return
 }
 
+// eraseFileTimestamps 抹除文件的创建和修改时间，设置为固定值（Unix 时间 0）
+func eraseFileTimestamps(filePath string) error {
+	// 使用 Unix 时间 0 (1970-01-01 00:00:00 UTC) 作为固定时间
+	fixedTime := time.Unix(0, 0)
+	return eraseFileTimestampsImpl(filePath, fixedTime)
+}
+
 func (e *EncryptedFile) Close() (err error) {
 	// 关闭文件指针
 	err = e.filePointer.Close()
 	if err != nil {
 		return err
+	}
+
+	// 抹除物理文件的创建和修改时间
+	if e.actualPath != "" {
+		if err := eraseFileTimestamps(e.actualPath); err != nil {
+			log.Warn().
+				Str("file", e.actualPath).
+				Err(err).
+				Msg("Failed to erase file timestamps")
+		}
 	}
 
 	return nil

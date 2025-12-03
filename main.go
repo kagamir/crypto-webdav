@@ -37,7 +37,7 @@ func init() {
 func getAddress() string {
 	address := os.Getenv("WEBDAV_ADDRESS")
 	if address == "" {
-		address = "0.0.0.0:4043"
+		address = "127.0.0.1:4043"
 	}
 	return address
 }

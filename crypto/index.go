@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"github.com/rs/zerolog/log"
 )
 
@@ -477,54 +478,6 @@ func findParentAndName(idx *IndexRoot, logicalPath string) (*FileNode, string, e
 	return parent, components[len(components)-1], nil
 }
 
-// ensureDirNode 确保路径对应的目录节点存在（可递归创建）
-func ensureDirNode(idx *IndexRoot, logicalPath string, now time.Time) (*FileNode, error) {
-	if idx == nil {
-		return nil, os.ErrInvalid
-	}
-	if logicalPath == "" || logicalPath == "/" || logicalPath == "." {
-		if idx.Root == nil {
-			idx.Root = &FileNode{
-				Name:     "",
-				IsDir:    true,
-				Children: make(map[string]*FileNode),
-				ModTime:  now,
-			}
-		}
-		return idx.Root, nil
-	}
-
-	components := splitPathComponents(logicalPath)
-	cur := idx.Root
-	if cur == nil {
-		cur = &FileNode{
-			Name:     "",
-			IsDir:    true,
-			Children: make(map[string]*FileNode),
-			ModTime:  now,
-		}
-		idx.Root = cur
-	}
-
-	for _, comp := range components {
-		if cur.Children == nil {
-			cur.Children = make(map[string]*FileNode)
-		}
-		child, ok := cur.Children[comp]
-		if !ok {
-			child = &FileNode{
-				Name:     comp,
-				IsDir:    true,
-				Children: make(map[string]*FileNode),
-				ModTime:  now,
-			}
-			cur.Children[comp] = child
-		}
-		cur = child
-	}
-	return cur, nil
-}
-
 // deleteNode 删除指定路径的节点，返回被删除的节点
 func deleteNode(idx *IndexRoot, logicalPath string) (*FileNode, error) {
 	parent, name, err := findParentAndName(idx, logicalPath)
@@ -558,43 +511,23 @@ func collectFileIDs(node *FileNode, ids *[]NodeID) {
 	}
 }
 
-// randomNodeID 生成随机 NodeID（十六进制字符串）
+// randomNodeID 生成随机 NodeID（UUIDv4格式）
 func randomNodeID() (NodeID, error) {
-	const idBytes = 16 // 128bit
-	buf := make([]byte, idBytes)
-	if _, err := rand.Read(buf); err != nil {
+	id, err := uuid.NewV4()
+	if err != nil {
 		return "", err
 	}
-	return NodeID(fmtBytesToHex(buf)), nil
-}
-
-// fmtBytesToHex 将字节数组转换为十六进制字符串
-func fmtBytesToHex(b []byte) string {
-	const hexChars = "0123456789abcdef"
-	out := make([]byte, len(b)*2)
-	for i, v := range b {
-		out[i*2] = hexChars[v>>4]
-		out[i*2+1] = hexChars[v&0x0f]
-	}
-	return string(out)
-}
-
-// 文件节点对应的物理路径
-func fileNodePhysicalPath(baseDir string, node *FileNode) string {
-	if node == nil || node.ID == "" {
-		return filepath.Join(baseDir, filesDirName)
-	}
-	return FilePathFromID(baseDir, node.ID)
+	return NodeID(id.String()), nil
 }
 
 // FilePathFromID 根据 NodeID 生成物理文件路径。
-// 为了降低单目录文件数量，这里按 ID 的前四位十六进制字符进行两级分桶：
+// 为了降低单目录文件数量，这里按 UUIDv4 的尾部4个字符（去掉连字符）进行两级分桶：
 //
-//	upload/user/files/ab/cd/abcdxxxxxxxx...
+//	upload/user/files/ab/cd/xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxabcd
 //
-// 若 ID 长度不足 4，则退化为更简单的结构：
-//   - 长度 >= 2: 使用一级分桶 upload/user/files/ab/id
-//   - 其他情况: 退化为原来的平铺目录结构 upload/user/files/id
+// UUIDv4格式：xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx（36字符）
+// 分桶策略：使用尾部4个字符（去掉连字符后的最后4个字符）的前2个字符和后2个字符进行两级分桶
+// 例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxabcd → 使用 ab 和 cd 进行分桶
 func FilePathFromID(baseDir string, id NodeID) string {
 	baseDir = filepath.Clean(baseDir)
 	if baseDir == "" {
@@ -602,15 +535,23 @@ func FilePathFromID(baseDir string, id NodeID) string {
 	}
 
 	idStr := string(id)
-	if len(idStr) >= 4 {
-		bucket1 := idStr[:2]
-		bucket2 := idStr[2:4]
+	// UUIDv4格式：xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx
+	// 去掉连字符，取尾部4个字符进行分桶
+	idWithoutHyphens := strings.ReplaceAll(idStr, "-", "")
+
+	if len(idWithoutHyphens) >= 4 {
+		// 使用尾部4个字符的前2个字符和后2个字符进行两级分桶
+		// 例如：...abcd -> bucket1=ab, bucket2=cd
+		last4 := idWithoutHyphens[len(idWithoutHyphens)-4:]
+		bucket1 := last4[:2]
+		bucket2 := last4[2:4]
 		return filepath.Join(baseDir, filesDirName, bucket1, bucket2, idStr)
 	}
 
-	if len(idStr) >= 2 {
-		bucket := idStr[:2]
-		return filepath.Join(baseDir, filesDirName, bucket, idStr)
+	if len(idWithoutHyphens) >= 2 {
+		// 如果长度不足4，使用最后2个字符进行一级分桶
+		last2 := idWithoutHyphens[len(idWithoutHyphens)-2:]
+		return filepath.Join(baseDir, filesDirName, last2, idStr)
 	}
 	return filepath.Join(baseDir, filesDirName, idStr)
 }
@@ -764,7 +705,8 @@ func (f *LogicalFile) Close() error {
 			if size < 0 {
 				size = 0
 			}
-			modTime := info.ModTime()
+			// 使用当前时间作为真实修改时间，而不是物理文件的时间（物理文件时间已被抹除）
+			realModTime := time.Now()
 
 			// 使用 UpdateIndex 原子性地更新索引，避免丢失其他并发更新
 			// 需要根据节点的 ID 或路径来查找并更新节点
@@ -791,7 +733,8 @@ func (f *LogicalFile) Close() error {
 
 				if targetNode != nil {
 					targetNode.Size = size
-					targetNode.ModTime = modTime
+					// 使用真实时间（当前时间）而不是物理文件时间
+					targetNode.ModTime = realModTime
 				}
 				return idx, nil
 			})
@@ -805,6 +748,6 @@ func (f *LogicalFile) Close() error {
 		}
 	}
 
-	// 最后关闭底层文件
+	// 最后关闭底层文件（这会抹除物理文件的时间戳）
 	return f.EncryptedFile.Close()
 }

@@ -453,9 +453,9 @@ func (d *DirFile) Seek(offset int64, whence int) (int64, error) {
 // Readdir 返回目录子项
 func (d *DirFile) Readdir(count int) ([]fs.FileInfo, error) {
 	if count <= 0 {
-		// 返回所有剩余
+		// 返回所有剩余；即使目录为空也视为成功
 		if d.readIndex >= len(d.children) {
-			return nil, io.EOF
+			return nil, nil
 		}
 		res := d.children[d.readIndex:]
 		d.readIndex = len(d.children)

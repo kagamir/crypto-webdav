@@ -159,7 +159,7 @@ func main() {
 		Handler: handler,
 	}
 
-	log.Info().
+	log.Warn().
 		Str("address", getAddress()).
 		Msg("Starting WebDAV server")
 	log.Fatal().Err(server.ListenAndServe()).Msg("WebDAV server stopped")

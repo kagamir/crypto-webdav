@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto-webdav/crypto"
 	"crypto-webdav/frontend"
+	"crypto-webdav/server"
 	"errors"
 	"net/http"
 	"os"
@@ -18,7 +19,7 @@ import (
 func init() {
 	// 配置 zerolog
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(zerolog.WarnLevel)
 
 	// 如果环境变量设置了日志级别，则使用该级别
 	if level := os.Getenv("LOG_LEVEL"); level != "" {
@@ -87,13 +88,33 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleWebDAV(w http.ResponseWriter, r *http.Request) {
+	// 记录请求的 debug 日志
+	log.Debug().
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Str("remote_addr", r.RemoteAddr).
+		Str("user_agent", r.UserAgent()).
+		Str("query", r.URL.RawQuery).
+		Msg("User API call")
+
 	// 登录验证
 	username, cryptoKey, ok := h.login(r)
 	if !ok {
+		log.Debug().
+			Str("method", r.Method).
+			Str("path", r.URL.Path).
+			Str("remote_addr", r.RemoteAddr).
+			Msg("Authentication failed")
 		authenticator := auth.NewBasicAuthenticator("Restricted", h.htpasswd.GetSecret)
 		authenticator.RequireAuth(w, r)
 		return
 	}
+
+	log.Debug().
+		Str("username", username).
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Msg("User authenticated")
 
 	// 创建 WebDAV handler
 	webdavHandler := h.makeWebdavHandler(username, cryptoKey)
@@ -154,13 +175,13 @@ func main() {
 
 	handler := &Handler{htpasswd: myHtpasswd}
 
-	server := &http.Server{
-		Addr:    getAddress(),
+	address := getAddress()
+	srv := &http.Server{
+		Addr:    address,
 		Handler: handler,
 	}
 
-	log.Warn().
-		Str("address", getAddress()).
-		Msg("Starting WebDAV server")
-	log.Fatal().Err(server.ListenAndServe()).Msg("WebDAV server stopped")
+	if err := server.StartServer(srv, address); err != nil {
+		log.Fatal().Err(err).Msg("WebDAV server stopped")
+	}
 }

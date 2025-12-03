@@ -38,15 +38,27 @@ type IndexRoot struct {
 }
 
 const (
-	indexFileName    = "index.meta.enc"
-	indexFileTmpName = "index.meta.enc.tmp"
-	filesDirName     = "files"
-	indexVersion     = 1
+	indexFileName       = "index.meta.enc"
+	indexFileTmpName    = "index.meta.enc.tmp"
+	filesDirName        = "files"
+	indexVersion        = 1
+	indexBackupFileName = "index.meta.enc.bak"
+
+	// indexBackupQueueSize 异步备份任务队列长度
+	indexBackupQueueSize = 16
 )
 
-// indexLocks 为每个用户的索引文件提供读写锁保护
-// key: baseDir (用户目录路径), value: *sync.RWMutex
-var indexLocks sync.Map
+var (
+	// indexLocks 为每个用户的索引文件提供读写锁保护
+	// key: baseDir (用户目录路径), value: *sync.RWMutex
+	indexLocks sync.Map
+
+	// indexBackupJobs 为索引备份任务提供异步队列
+	indexBackupJobs chan string
+
+	// indexBackupOnce 确保备份 worker 只启动一次
+	indexBackupOnce sync.Once
+)
 
 // getIndexLock 获取指定 baseDir 的读写锁
 func getIndexLock(baseDir string) *sync.RWMutex {
@@ -127,6 +139,90 @@ func ensureBaseLayout(baseDir string) error {
 	if err := os.MkdirAll(filesDir, 0o755); err != nil {
 		return err
 	}
+	return nil
+}
+
+// initIndexBackupWorker 初始化索引备份 worker（只会执行一次）
+func initIndexBackupWorker() {
+	indexBackupOnce.Do(func() {
+		indexBackupJobs = make(chan string, indexBackupQueueSize)
+		go indexBackupWorker()
+	})
+}
+
+// scheduleIndexBackup 调度一次异步索引备份
+// 仅负责将任务放入队列，不做实际 I/O，避免阻塞主写路径
+func scheduleIndexBackup(baseDir string) {
+	if baseDir == "" {
+		baseDir = "."
+	}
+	baseDir = filepath.Clean(baseDir)
+
+	initIndexBackupWorker()
+
+	select {
+	case indexBackupJobs <- baseDir:
+	default:
+		log.Warn().
+			Str("baseDir", baseDir).
+			Msg("Index backup queue is full, dropping backup request")
+	}
+}
+
+// indexBackupWorker 持续从队列中读取任务并执行实际备份
+func indexBackupWorker() {
+	for baseDir := range indexBackupJobs {
+		if err := doIndexBackup(baseDir); err != nil {
+			log.Error().
+				Str("baseDir", baseDir).
+				Err(err).
+				Msg("Failed to backup index file")
+		}
+	}
+}
+
+// doIndexBackup 执行一次实际的索引文件备份
+// 在 baseDir 下将 index.meta.enc 复制到 files/index.meta.enc.bak
+func doIndexBackup(baseDir string) error {
+	if err := ensureBaseLayout(baseDir); err != nil {
+		return err
+	}
+
+	indexPath := filepath.Join(baseDir, indexFileName)
+
+	// 若索引文件不存在（比如刚初始化），直接跳过备份
+	if _, err := os.Stat(indexPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Debug().
+				Str("baseDir", baseDir).
+				Msg("Index file not found, skip backup")
+			return nil
+		}
+		return err
+	}
+
+	backupDir := filepath.Join(baseDir, filesDirName)
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		return err
+	}
+	backupPath := filepath.Join(backupDir, indexBackupFileName)
+
+	src, err := os.Open(indexPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.OpenFile(backupPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -212,7 +308,15 @@ func SaveIndex(idx *IndexRoot, baseDir string, key []byte) error {
 	if err := os.WriteFile(tmpPath, encrypted, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, finalPath)
+
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		return err
+	}
+
+	// 索引写入成功后，调度一次异步备份
+	scheduleIndexBackup(baseDir)
+
+	return nil
 }
 
 // UpdateIndex 原子性地读取、修改并保存索引文件
@@ -299,7 +403,15 @@ func UpdateIndex(baseDir string, key []byte, updateFn func(*IndexRoot) (*IndexRo
 	if err := os.WriteFile(tmpPath, encrypted, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, finalPath)
+
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		return err
+	}
+
+	// 索引更新成功后，调度一次异步备份
+	scheduleIndexBackup(baseDir)
+
+	return nil
 }
 
 // splitPathComponents 将 WebDAV 路径分割为逻辑组件

@@ -100,6 +100,39 @@ The WebDAV layer (`FileCrypto`) exposes a logical tree based on `index.meta.enc`
 4. **Streaming decryption**: Large files can be accessed via HTTP Range requests and streamed without full decryption.
 5. **Nonce‑bound security**: Even if a key leaks, decryption of data still requires the corresponding nonce stored with each file / index.
 
+### Index backup and recovery
+
+- **Automatic backup**:  
+  Every time the per‑user index file `index.meta.enc` is successfully written or updated, the server asynchronously creates a binary backup copy under the same user’s `files/` directory:
+
+  ```text
+  upload/
+  └── {username}/
+      ├── index.meta.enc
+      └── files/
+          └── index.meta.enc.bak   # latest backup of the encrypted index
+  ```
+
+- **Backup content**:  
+  `index.meta.enc.bak` is a byte‑for‑byte copy of `index.meta.enc`, including its nonce and encrypted JSON payload. It is encrypted with the same per‑user key and can be used as a drop‑in replacement.
+
+- **Manual recovery procedure (when index is corrupted or deleted)**:
+
+  1. Stop the Crypto WebDAV service.
+  2. Go to the affected user’s directory (for example `upload/{username}`).
+  3. If `index.meta.enc.bak` exists, restore the index by copying it over the main index file:
+
+     ```bash
+     cd upload/{username}
+     cp files/index.meta.enc.bak index.meta.enc
+     ```
+
+  4. Start the Crypto WebDAV service again. The logical tree will be loaded from the restored index.
+
+- **Notes**:
+  - Only the latest backup is kept; restoring from it brings you back to the most recent successful index write.
+  - It is still recommended to regularly back up the whole `upload/` directory and the `htpasswd` file.
+
 ## Usage
 
 ### Environment variables
@@ -197,6 +230,7 @@ echo "username:$(openssl passwd -apr1 password)" >> /path/to/htpasswd
 ## Futures
 
 - [x] Hash‑based sharding and hierarchical directory layout
+- [ ] Index file initialized to 10MB, automatically expands by 10MB when capacity is exceeded
 
 ## Development
 

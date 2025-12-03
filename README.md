@@ -230,7 +230,6 @@ echo "username:$(openssl passwd -apr1 password)" >> /path/to/htpasswd
 ## Futures
 
 - [x] Hash‑based sharding and hierarchical directory layout
-- [x] Index file initialized to 10MB, automatically expands by 10MB when capacity is exceeded
 
 ## Development
 

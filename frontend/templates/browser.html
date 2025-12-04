@@ -84,6 +84,11 @@
             color: white;
         }
         
+        .btn-warning {
+            background-color: #ff9800;
+            color: white;
+        }
+        
         .btn-small {
             padding: 6px 12px;
             font-size: 12px;
@@ -284,6 +289,7 @@
                     <td>{{.Size}}</td>
                     <td>{{.ModTime}}</td>
                     <td>
+                        <button class="btn-warning btn-small" onclick="renameFile('{{.Name}}','{{.IsDir}}','{{.Path}}')">Rename</button>
                         <button class="btn-danger btn-small" onclick="deleteFile('{{.Name}}','{{.IsDir}}','{{.Path}}')">Delete</button>
                     </td>
                 </tr>
@@ -475,6 +481,51 @@
             .catch(error => {
                 console.error('Error:', error);
                 showMessage('Failed to create folder: ' + error.message, 'error');
+            });
+        }
+        
+        // 重命名文件或目录
+        function renameFile(fileName, fileType, filePath) {
+            const newName = prompt('Enter new name for ' + fileType.toLowerCase() + ' "' + fileName + '":', fileName);
+            if (!newName || newName.trim() === '') {
+                return;
+            }
+            
+            // 清理新名称
+            const cleanName = newName.trim().replace(/[\/\\]/g, '_');
+            if (cleanName === '') {
+                showMessage('Invalid name', 'error');
+                return;
+            }
+            
+            // 如果名称没有改变，直接返回
+            if (cleanName === fileName) {
+                return;
+            }
+            
+            const currentPath = getCurrentPath();
+            const newPath = pathJoin(currentPath, cleanName);
+            
+            // 使用 WebDAV MOVE 方法进行重命名
+            fetch(filePath, {
+                method: 'MOVE',
+                headers: {
+                    'Destination': newPath
+                }
+            })
+            .then(response => {
+                if (response.ok || response.status === 201 || response.status === 204) {
+                    showMessage(fileType + ' "' + fileName + '" renamed to "' + cleanName + '" successfully', 'success');
+                    setTimeout(() => window.location.reload(), 500);
+                } else {
+                    return response.text().then(text => {
+                        throw new Error('HTTP ' + response.status + ': ' + text);
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showMessage('Failed to rename ' + fileType.toLowerCase() + ': ' + error.message, 'error');
             });
         }
         

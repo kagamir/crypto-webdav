@@ -603,7 +603,7 @@ type DirFile struct {
 	readIndex int
 }
 
-func newDirFile(node *FileNode, baseDir string) *DirFile {
+func newDirFile(node *FileNode) *DirFile {
 	infos := make([]fs.FileInfo, 0, len(node.Children))
 	for _, child := range node.Children {
 		if child.IsDir {

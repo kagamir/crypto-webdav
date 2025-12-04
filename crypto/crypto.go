@@ -150,7 +150,7 @@ func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os
 
 	// 处理根目录
 	if name == "/" {
-		return newDirFile(index.Root, baseDir), nil
+		return newDirFile(index.Root), nil
 	}
 
 	// 先查找是否已经存在节点
@@ -227,7 +227,7 @@ func (c FileCrypto) OpenFile(ctx context.Context, name string, flag int, perm os
 
 	// 目录：返回逻辑目录文件
 	if node.IsDir {
-		return newDirFile(node, baseDir), nil
+		return newDirFile(node), nil
 	}
 
 	// 文件：打开物理加密文件

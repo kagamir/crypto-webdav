@@ -154,7 +154,6 @@ All environment variable configurations are managed by the `config` package (`co
 export WEBDAV_ADDRESS=0.0.0.0:8080
 export WEBDAV_HTPASSWD_FILE=/path/to/htpasswd
 export LOG_LEVEL=info
-export ENV=development
 export HTTPS_DISABLED=false
 ./crypto-webdav
 ```
@@ -164,7 +163,6 @@ export HTTPS_DISABLED=false
 $env:WEBDAV_ADDRESS="0.0.0.0:8080"
 $env:WEBDAV_HTPASSWD_FILE="C:\path\to\htpasswd"
 $env:LOG_LEVEL="info"
-$env:ENV="development"
 $env:HTTPS_DISABLED="false"
 .\crypto-webdav.exe
 ```
@@ -184,7 +182,6 @@ docker run --restart always \
   -e WEBDAV_ADDRESS=0.0.0.0:8080 \
   -e WEBDAV_HTPASSWD_FILE=/htpasswd \
   -e LOG_LEVEL=info \
-  -e ENV=production \
   -e HTTPS_DISABLED=false \
   -p 8080:8080 \
   --name crypto-webdav \

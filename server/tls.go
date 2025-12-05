@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto-webdav/config"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -9,8 +10,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -18,7 +17,7 @@ import (
 
 // IsSSLEnabled 检查是否启用 SSL
 func IsSSLEnabled() bool {
-	return strings.ToLower(os.Getenv("SSL_ENABLED")) == "true"
+	return config.IsSSLEnabled()
 }
 
 // generateSelfSignedCert 生成自签证书
@@ -34,7 +33,7 @@ func generateSelfSignedCert(address string) (tls.Certificate, error) {
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
 			Organization:  []string{"Crypto WebDAV"},
-			Country:       []string{"CN"},
+			Country:       []string{"Global"},
 			Province:      []string{""},
 			Locality:      []string{""},
 			StreetAddress: []string{""},

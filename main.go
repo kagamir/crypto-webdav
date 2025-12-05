@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto-webdav/config"
 	"crypto-webdav/crypto"
 	"crypto-webdav/frontend"
 	"crypto-webdav/server"
@@ -22,24 +23,20 @@ func init() {
 	zerolog.SetGlobalLevel(zerolog.WarnLevel)
 
 	// 如果环境变量设置了日志级别，则使用该级别
-	if level := os.Getenv("LOG_LEVEL"); level != "" {
+	if level := config.GetLogLevel(); level != "" {
 		if l, err := zerolog.ParseLevel(level); err == nil {
 			zerolog.SetGlobalLevel(l)
 		}
 	}
 
 	// 在开发环境中使用彩色输出
-	if os.Getenv("ENV") == "development" {
+	if config.GetEnv() == "development" {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 	}
 }
 
 func getAddress() string {
-	address := os.Getenv("WEBDAV_ADDRESS")
-	if address == "" {
-		address = "127.0.0.1:4043"
-	}
-	return address
+	return config.GetWebDAVAddress()
 }
 
 type Handler struct {

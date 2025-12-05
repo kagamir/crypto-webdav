@@ -1,67 +1,69 @@
-## Crypto WebDAV
+# Crypto WebDAV
 
-A WebDAV server with **server-side encryption**.  
-File contents are encrypted with AES in CTR mode, supporting streaming encryption/decryption and random access for large files (such as videos).  
-Logical file and directory metadata are stored in a per‑user encrypted index file.  
+A WebDAV server with **server-side encryption**. File contents are encrypted with AES-256-CTR, supporting streaming encryption/decryption and random access for large files. Logical file and directory metadata are stored in a per-user encrypted index file.
 
-### Security Features
+## Security Architecture
 
-#### 1. Key derivation
-- **Method**: SHA‑256
+### Key Derivation
+
+- **Method**: SHA-256
 - **Input**: `SHA256(username + password)`
-- **Output**: 32‑byte encryption key
-- **Usage**: Each user has an independent symmetric key derived from their own username and password
+- **Output**: 32-byte encryption key (256 bits)
+- **Isolation**: Each user has an independent symmetric key derived from their own credentials
 
-> Note: There is also an `Argon2` helper in code, but the current login flow uses SHA‑256 as shown above.
+> **Note**: An `Argon2` helper exists in code, but the current login flow uses SHA-256 as shown above.
 
-#### 2. File content encryption
-- **Algorithm**: AES‑256‑CTR (Counter Mode)
+### File Content Encryption
+
+- **Algorithm**: AES-256-CTR (Counter Mode)
 - **Key length**: 256 bits (32 bytes)
-- **Nonce generation**: For each physical file, a 16‑byte random nonce is generated with `crypto/rand`
-- **Nonce storage**: The first 16 bytes at the beginning of the physical file
-- **IV calculation**: `IV = nonce + (position / 16)` (big‑integer addition)
-- **Streaming property**: CTR mode naturally supports streaming encryption/decryption without padding and allows random access to any position
+- **Nonce generation**: For each physical file, a 16-byte random nonce is generated using `crypto/rand`
+- **Nonce storage**: The first 16 bytes at the beginning of each physical file
+- **IV calculation**: `IV = nonce + (position / 16)` using big-integer addition
+- **Streaming support**: CTR mode supports streaming encryption/decryption without padding and enables random access to any position
 
-Technical detail (simplified from `crypto/file.go`):
+**Technical implementation** (from `crypto/file.go`):
 
 ```go
-// Each 16‑byte block uses a different counter value
 offset := position / BlockSize   // BlockSize == 16
 iv := nonce + offset             // big.Int addition
 stream := cipher.NewCTR(block, iv)
 ```
 
-#### 3. Logical file and directory names
-- **Logical names** (user‑visible path segments in WebDAV) are stored only inside the encrypted index file.
-- **Physical storage**: Encrypted file data is stored under a per‑user `files/` directory using random IDs, not hashes of content or names.
-- **Node ID**: For each file node, a random 128‑bit ID is generated (16 random bytes encoded as lower‑case hex) and used as the physical filename.
-- **Privacy**: From the on‑disk layout it is not possible to infer original file or directory names.
+### Logical File System
 
-#### 4. Metadata and index encryption
+- **Logical names**: User-visible path segments in WebDAV are stored only inside the encrypted index file
+- **Physical storage**: Encrypted file data is stored under a per-user `files/` directory using random UUIDv4 identifiers
+- **Node ID**: Each file node is assigned a random 128-bit UUIDv4 (36-character hex string) used as the physical filename
+- **Privacy**: The on-disk layout reveals no information about original file or directory names
+- **Sharding**: Physical files are organized in a two-level bucket structure based on the last 4 characters of the UUID (e.g., `files/ab/cd/uuid-string`) to reduce single-directory file count
 
-Instead of per‑file `.meta` sidecar files, the current implementation uses a **single encrypted index file per user** that contains the entire logical tree.
+### Index Encryption
 
-- **Index file name**: `index.meta.enc`
-- **Location**: In each user’s root directory under `upload/{username}`
-- **Content**: JSON document describing the full logical directory tree
-- **Encryption algorithm**: AES‑256‑CTR
-- **Nonce**: 16‑byte random nonce generated for the index file
-- **On‑disk format**: `nonce (16 bytes) + encrypted_json_data`
+The system uses a **single encrypted index file per user** containing the entire logical directory tree.
 
-JSON structures (simplified from `crypto/index.go`):
+- **Index file**: `index.meta.enc`
+- **Location**: `upload/{username}/index.meta.enc`
+- **Content**: JSON document describing the complete logical directory tree
+- **Encryption**: AES-256-CTR with a 16-byte random nonce
+- **On-disk format**: `nonce (16 bytes) + encrypted_json_data`
+- **Atomic updates**: Index writes use a temporary file followed by atomic rename to prevent corruption
+- **Concurrency**: Read-write locks protect index operations, allowing concurrent reads but exclusive writes
+
+**Index structure** (from `crypto/index.go`):
 
 ```json
 {
   "version": 1,
   "root": {
-    "id": "optional-file-id-or-empty-for-dir",
+    "id": "",
     "name": "",
     "size": 0,
     "modTime": "2024-01-01T00:00:00Z",
     "isDir": true,
     "children": {
       "file-or-dir-name": {
-        "id": "hex-node-id-for-files",
+        "id": "uuid-v4-for-files",
         "name": "file-or-dir-name",
         "size": 1234,
         "modTime": "2024-01-01T00:00:00Z",
@@ -73,163 +75,161 @@ JSON structures (simplified from `crypto/index.go`):
 }
 ```
 
-Each logical node corresponds either to:
-- a **directory** (`isDir == true`), with `children` populated; or  
-- a **file** (`isDir == false`), with `id` set to the random physical NodeID and `size` / `modTime` describing the logical file.
+Each logical node is either:
+- A **directory** (`isDir == true`) with `children` populated, or
+- A **file** (`isDir == false`) with `id` set to the UUIDv4 physical NodeID and `size`/`modTime` describing the logical file.
 
-### On‑disk storage layout
+### Storage Layout
 
-Per‑user storage is organized as follows:
+Per-user storage structure:
 
-```text
+```
 upload/
 └── {username}/
-    ├── index.meta.enc        # Encrypted logical index (JSON + AES‑CTR)
+    ├── index.meta.enc        # Encrypted logical index (AES-256-CTR)
     └── files/                # Physical encrypted file blobs
-        ├── {nodeID1}         # Random hex NodeID, contains nonce + ciphertext
-        └── {nodeID2}
+        ├── ab/
+        │   └── cd/
+        │       └── xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxabcd
+        └── index.meta.enc.bak   # Automatic backup of index
 ```
 
-The WebDAV layer (`FileCrypto`) exposes a logical tree based on `index.meta.enc`, while physical files under `files/` hold only encrypted content plus a per‑file nonce.
+The WebDAV layer (`FileCrypto`) exposes a logical tree based on `index.meta.enc`, while physical files under `files/` contain only encrypted content plus a per-file nonce.
 
-### Security guarantees
+### Security Guarantees
 
-1. **Server‑side encryption**: All file contents and logical metadata are stored encrypted on disk.
-2. **Key isolation**: Each user has an independent symmetric key; users cannot decrypt or list each other’s data.
-3. **No plaintext names**: Logical file and directory names exist only inside the encrypted index, not in the raw filesystem layout.
-4. **Streaming decryption**: Large files can be accessed via HTTP Range requests and streamed without full decryption.
-5. **Nonce‑bound security**: Even if a key leaks, decryption of data still requires the corresponding nonce stored with each file / index.
+1. **Server-side encryption**: All file contents and logical metadata are encrypted on disk
+2. **Key isolation**: Each user has an independent symmetric key; users cannot decrypt or list each other's data
+3. **No plaintext names**: Logical file and directory names exist only inside the encrypted index
+4. **Timestamp erasure**: Physical file creation and modification timestamps are erased (set to Unix epoch) to prevent metadata leakage
+5. **Streaming decryption**: Large files can be accessed via HTTP Range requests without full decryption
+6. **Nonce-bound security**: Even if a key leaks, decryption requires the corresponding nonce stored with each file/index
 
-### Index backup and recovery
+### Index Backup and Recovery
 
-- **Automatic backup**:  
-  Every time the per‑user index file `index.meta.enc` is successfully written or updated, the server asynchronously creates a binary backup copy under the same user’s `files/` directory:
+**Automatic backup**:  
+Every time `index.meta.enc` is successfully written, the server asynchronously creates a backup copy at `files/index.meta.enc.bak`. The backup is a byte-for-byte copy, encrypted with the same per-user key.
 
-  ```text
-  upload/
-  └── {username}/
-      ├── index.meta.enc
-      └── files/
-          └── index.meta.enc.bak   # latest backup of the encrypted index
-  ```
+**Manual recovery** (when index is corrupted or deleted):
 
-- **Backup content**:  
-  `index.meta.enc.bak` is a byte‑for‑byte copy of `index.meta.enc`, including its nonce and encrypted JSON payload. It is encrypted with the same per‑user key and can be used as a drop‑in replacement.
+1. Stop the Crypto WebDAV service
+2. Navigate to the affected user's directory: `upload/{username}`
+3. Restore from backup:
+   ```bash
+   cd upload/{username}
+   cp files/index.meta.enc.bak index.meta.enc
+   ```
+4. Restart the service
 
-- **Manual recovery procedure (when index is corrupted or deleted)**:
-
-  1. Stop the Crypto WebDAV service.
-  2. Go to the affected user’s directory (for example `upload/{username}`).
-  3. If `index.meta.enc.bak` exists, restore the index by copying it over the main index file:
-
-     ```bash
-     cd upload/{username}
-     cp files/index.meta.enc.bak index.meta.enc
-     ```
-
-  4. Start the Crypto WebDAV service again. The logical tree will be loaded from the restored index.
-
-- **Notes**:
-  - Only the latest backup is kept; restoring from it brings you back to the most recent successful index write.
-  - It is still recommended to regularly back up the whole `upload/` directory and the `htpasswd` file.
+**Notes**:
+- Only the latest backup is kept
+- Regular backups of the entire `upload/` directory and `htpasswd` file are still recommended
 
 ## Usage
 
-### Environment variables
+### Environment Variables
 
-- `WEBDAV_ADDRESS`: WebDAV listen address (default: `0.0.0.0:4043`)
-- `WEBDAV_HTPASSWD_FILE`: path to the `htpasswd` file (default: `./htpasswd`)
-- `LOG_LEVEL`: log level for `zerolog` (e.g. `debug`, `info`, `warn`, `error`)
-- `ENV`: when set to `development`, logs are printed in colored, human‑friendly format
+All environment variable configurations are managed by the `config` package (`config/config.go`). The following are all available environment variables:
 
-### Linux
+| Environment Variable | Description | Default Value | Example |
+|---------------------|-------------|---------------|---------|
+| `WEBDAV_ADDRESS` | WebDAV server listening address | `127.0.0.1:4043` | `0.0.0.0:8080` |
+| `WEBDAV_HTPASSWD_FILE` | htpasswd authentication file path | `./htpasswd` | `/etc/webdav/htpasswd` |
+| `LOG_LEVEL` | Log level | `warn` | `debug`, `info`, `warn`, `error`, `fatal`, `panic`, `trace` |
+| `ENV` | Runtime environment | - | `development` (enables colored log output) |
+| `HTTPS_DISABLED` | Whether to disable HTTPS | `false` | `true` (disables HTTPS, uses HTTP) |
 
+**Detailed description:**
+
+- **WEBDAV_ADDRESS**: Sets the IP address and port that the WebDAV server binds to. Format is `IP:PORT`, for example `0.0.0.0:8080` means listening on all network interfaces on port 8080.
+- **WEBDAV_HTPASSWD_FILE**: Specifies the full path to the htpasswd file. This file is used for HTTP Basic Authentication.
+- **LOG_LEVEL**: Controls the verbosity of log output. Valid values: `trace`, `debug`, `info`, `warn`, `error`, `fatal`, `panic`.
+- **ENV**: When set to `development`, logs will be output to the console in a colored, human-friendly format.
+- **HTTPS_DISABLED**: When set to `true`, disables HTTPS and the server will use HTTP protocol. By default, the server enables HTTPS using a self-signed certificate.
+
+### Running
+
+**Linux/macOS**:
 ```bash
 export WEBDAV_ADDRESS=0.0.0.0:8080
 export WEBDAV_HTPASSWD_FILE=/path/to/htpasswd
+export LOG_LEVEL=info
+export ENV=development
+export HTTPS_DISABLED=false
 ./crypto-webdav
 ```
 
-### Windows
-
+**Windows**:
 ```powershell
 $env:WEBDAV_ADDRESS="0.0.0.0:8080"
 $env:WEBDAV_HTPASSWD_FILE="C:\path\to\htpasswd"
+$env:LOG_LEVEL="info"
+$env:ENV="development"
+$env:HTTPS_DISABLED="false"
 .\crypto-webdav.exe
 ```
 
-## Docker deployment
+### Docker Deployment
 
-### Build image
-
+**Build**:
 ```bash
 docker build -t crypto-webdav .
 ```
 
-### Run container
-
+**Run**:
 ```bash
 docker run --restart always \
   -v /path/to/storage:/upload \
   -v /path/to/htpasswd:/htpasswd \
   -e WEBDAV_ADDRESS=0.0.0.0:8080 \
   -e WEBDAV_HTPASSWD_FILE=/htpasswd \
+  -e LOG_LEVEL=info \
+  -e ENV=production \
+  -e HTTPS_DISABLED=false \
   -p 8080:8080 \
   --name crypto-webdav \
   -d crypto-webdav
 ```
 
-### Parameter explanation
-
-- `-v /path/to/storage:/upload`: mount persistent storage for encrypted data
-- `-v /path/to/htpasswd:/htpasswd`: mount `htpasswd` file for authentication
-- `-p 8080:8080`: map container port to host
-- `--restart always`: automatically restart container
-
-### Creating an `htpasswd` file
-
+**Creating an `htpasswd` file**:
 ```bash
-# Using the 'htpasswd' tool
+# Using htpasswd tool
 htpasswd -c /path/to/htpasswd username
 
 # Or using OpenSSL
 echo "username:$(openssl passwd -apr1 password)" >> /path/to/htpasswd
 ```
 
-## Security recommendations
+## Security Recommendations
 
-1. **Use HTTPS**: It is strongly recommended to terminate TLS via a reverse proxy (Nginx, Caddy, etc.).
-2. **Strong passwords**: User password strength directly affects derived key strength.
-3. **Regular backups**: Back up encrypted data under `upload/` and the `htpasswd` file.
-4. **Access control**: Restrict access to the WebDAV port using a firewall or reverse proxy ACLs.
-5. **Credential protection**: Keep the `htpasswd` file secret; if it leaks, attackers can authenticate and derive user keys.
+1. **Use HTTPS**: Terminate TLS via a reverse proxy (Nginx, Caddy, etc.)
+2. **Strong passwords**: User password strength directly affects derived key strength
+3. **Regular backups**: Back up encrypted data under `upload/` and the `htpasswd` file
+4. **Access control**: Restrict access to the WebDAV port using a firewall or reverse proxy ACLs
+5. **Credential protection**: Keep the `htpasswd` file secret; if it leaks, attackers can authenticate and derive user keys
 
-## Technical architecture
+## Technical Architecture
 
-- **WebDAV protocol**: based on `golang.org/x/net/webdav`
-- **HTTP server**: Go’s standard `net/http` (fully compatible with WebDAV methods)
+- **WebDAV protocol**: Based on `golang.org/x/net/webdav`
+- **HTTP server**: Go's standard `net/http` (fully compatible with WebDAV methods)
 - **Authentication**: HTTP Basic Authentication with `htpasswd` verification
-- **Encryption**: AES‑256‑CTR for both file content and the index
-- **Hashing**: SHA‑256 for key derivation (current login flow)
-- **Indexing**: Custom logical index (`index.meta.enc`) describing the entire tree, loaded and saved per user
+- **Encryption**: AES-256-CTR for both file content and index
+- **Key derivation**: SHA-256 (current login flow)
+- **Indexing**: Custom logical index (`index.meta.enc`) describing the entire tree, loaded and saved per user with read-write lock protection
 
-## Performance characteristics
+## Performance Characteristics
 
-- **Streaming I/O**: Supports streaming upload/download of large files.
-- **Random access**: Works with HTTP Range requests, suitable for video seeking and online preview.
-- **Low overhead per block**: CTR mode uses XOR operations on blocks, with minimal CPU overhead.
-- **Memory efficiency**: File contents are processed in chunks; no need to load whole files into RAM.
-- **Index‑based listing**: Directory listings and metadata are served from the in‑memory index tree without scanning the `files/` directory.
+- **Streaming I/O**: Supports streaming upload/download of large files
+- **Random access**: Works with HTTP Range requests, suitable for video seeking and online preview
+- **Low overhead**: CTR mode uses XOR operations on blocks with minimal CPU overhead
+- **Memory efficiency**: File contents are processed in chunks; no need to load whole files into RAM
+- **Index-based listing**: Directory listings and metadata are served from the in-memory index tree without scanning the `files/` directory
 
 ## Limitations
 
-- The per‑user index (`index.meta.enc`) contains the full logical tree; very large trees may increase index size and update cost.
-- File contents cannot be updated incrementally at the encryption layer; rewriting a file rewrites its encrypted content.
-- There is no built‑in content‑hash deduplication; each logical file corresponds to its own encrypted blob.
-
-## Futures
-
-- [x] Hash‑based sharding and hierarchical directory layout
+- The per-user index (`index.meta.enc`) contains the full logical tree; very large trees may increase index size and update cost
+- File contents cannot be updated incrementally at the encryption layer; rewriting a file rewrites its encrypted content
+- No built-in content-hash deduplication; each logical file corresponds to its own encrypted blob
 
 ## Development
 

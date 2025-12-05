@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"crypto-webdav/config"
 	"os"
 
 	"github.com/foomo/htpasswd"
@@ -13,10 +14,7 @@ type Htpasswd struct {
 }
 
 func (h *Htpasswd) Init() (err error) {
-	htpasswdPath := os.Getenv("WEBDAV_HTPASSWD_FILE")
-	if htpasswdPath == "" {
-		htpasswdPath = "./htpasswd"
-	}
+	htpasswdPath := config.GetHtpasswdFile()
 	passwords, err := htpasswd.ParseHtpasswdFile(htpasswdPath)
 	if err != nil {
 		log.Fatal().
